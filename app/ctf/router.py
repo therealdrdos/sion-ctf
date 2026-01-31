@@ -211,6 +211,57 @@ async def stop_challenge(request: Request, challenge_id: int):
     return '<div class="p-3 bg-gray-700 rounded text-gray-300">Challenge stopped.</div>'
 
 
+@router.delete("/challenge/{challenge_id}", response_class=HTMLResponse)
+async def delete_challenge(request: Request, challenge_id: int):
+    """Delete a challenge."""
+    user = get_current_user(request)
+    if not user:
+        return error_msg("Not authenticated")
+
+    with get_connection() as conn:
+        challenge = conn.execute(
+            "SELECT container_id FROM challenges WHERE id = ? AND user_id = ?",
+            (challenge_id, user["id"]),
+        ).fetchone()
+
+        if not challenge:
+            return error_msg("Challenge not found")
+
+        # Stop container if running
+        if challenge["container_id"]:
+            mgr = get_docker_manager()
+            if mgr:
+                mgr.stop_container(challenge["container_id"])
+
+        conn.execute("DELETE FROM challenges WHERE id = ?", (challenge_id,))
+
+    return ""
+
+
+@router.delete("/challenges", response_class=HTMLResponse)
+async def delete_all_challenges(request: Request):
+    """Delete all challenges for current user."""
+    user = get_current_user(request)
+    if not user:
+        return error_msg("Not authenticated")
+
+    with get_connection() as conn:
+        challenges = conn.execute(
+            "SELECT container_id FROM challenges WHERE user_id = ? AND container_id IS NOT NULL",
+            (user["id"],),
+        ).fetchall()
+
+        # Stop all containers
+        mgr = get_docker_manager()
+        if mgr:
+            for c in challenges:
+                mgr.stop_container(c["container_id"])
+
+        conn.execute("DELETE FROM challenges WHERE user_id = ?", (user["id"],))
+
+    return ""
+
+
 def error_msg(msg: str) -> str:
     return f'<div class="p-3 bg-red-900 rounded text-red-200 mt-2">{msg}</div>'
 
