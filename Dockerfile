@@ -2,12 +2,19 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+# Install system dependencies (git is needed for aider)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
+# Install uv for faster, more reliable dependency resolution
+RUN pip install --no-cache-dir uv
+
 COPY pyproject.toml .
-RUN pip install --no-cache-dir .
+
+# Use uv to install dependencies (handles complex dependency resolution better)
+RUN uv pip install --system --no-cache .
 
 COPY app/ app/
 
