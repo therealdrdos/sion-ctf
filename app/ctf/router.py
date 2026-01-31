@@ -157,18 +157,11 @@ async def generate_ctf(
         logger.warning(f"Validation error: {e}")
 
     if validated:
-        return msg_html + success_msg(
-            "CTF Ready!",
-            challenge.vuln_description,
-            url,
-            challenge_id,
-            challenge.exploit_hint,
-        )
+        return msg_html + success_msg("CTF Ready!", url, challenge_id)
 
     # Validation failed - warn user but still allow playing
     return msg_html + warn_msg(
         "CTF Deployed (unverified)",
-        challenge.vuln_description,
         url,
         challenge_id,
         "Flag extraction could not be verified. Challenge may be harder than intended.",
@@ -296,12 +289,11 @@ def info_msg(title: str, desc: str, note: str, challenge_id: int) -> str:
     """
 
 
-def warn_msg(title: str, desc: str, url: str, challenge_id: int, warning: str) -> str:
+def warn_msg(title: str, url: str, challenge_id: int, warning: str) -> str:
     return f"""
     <div class="p-3 bg-yellow-900 rounded text-yellow-200 mt-2">
         <p class="font-medium">{title}</p>
-        <p class="text-sm mt-1">{desc}</p>
-        <p class="text-xs text-yellow-400 mt-2">{warning}</p>
+        <p class="text-xs text-yellow-400 mt-1">{warning}</p>
         <div class="mt-3 flex gap-2 flex-wrap">
             <a href="{url}" target="_blank"
                class="px-3 py-1 bg-blue-600 hover:bg-blue-700 rounded text-sm">
@@ -326,17 +318,16 @@ def warn_msg(title: str, desc: str, url: str, challenge_id: int, warning: str) -
         </form>
     </div>
     <script>
-        showChallenge("{url}", "{desc}", {challenge_id});
+        showChallenge("{url}", "{title}", {challenge_id});
     </script>
     """
 
 
-def success_msg(title: str, desc: str, url: str, challenge_id: int, hint: str) -> str:
+def success_msg(title: str, url: str, challenge_id: int) -> str:
     return f"""
     <div class="p-3 bg-green-900 rounded text-green-200 mt-2">
         <p class="font-medium">{title}</p>
-        <p class="text-sm mt-1">{desc}</p>
-        <p class="text-xs text-gray-400 mt-2">Hint: {hint}</p>
+        <p class="text-sm text-gray-400 mt-1">Find the flag. Need help? Check the tutorial.</p>
         <div class="mt-3 flex gap-2 flex-wrap">
             <a href="{url}" target="_blank"
                class="px-3 py-1 bg-blue-600 hover:bg-blue-700 rounded text-sm">
@@ -361,6 +352,6 @@ def success_msg(title: str, desc: str, url: str, challenge_id: int, hint: str) -
         </form>
     </div>
     <script>
-        showChallenge("{url}", "{desc}", {challenge_id});
+        showChallenge("{url}", "{title}", {challenge_id});
     </script>
     """
