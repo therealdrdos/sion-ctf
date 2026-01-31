@@ -139,10 +139,13 @@ async def generate_ctf(
     validated = False
     try:
         valid, solution, err = validate_challenge(
-            challenge.app_code,
-            challenge.flag,
-            url,
-            vuln_list,
+            app_code=challenge.app_code,
+            expected_flag=challenge.flag,
+            target_url=url,
+            vuln_types=vuln_list,
+            vuln_description=challenge.vuln_description,
+            exploit_hint=challenge.exploit_hint,
+            exploit_payload=challenge.exploit_payload,
             user_id=user_id,
             max_retries=1,
         )

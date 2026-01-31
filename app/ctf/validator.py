@@ -9,14 +9,19 @@ from openai import OpenAI
 
 from app.dashboard.router import get_user_api_key, save_api_usage
 
-SOLUTION_PROMPT = """You are a CTF solver. Given a vulnerable Flask application, generate a \
-Python script that exploits the vulnerability to retrieve the flag.
+SOLUTION_PROMPT = """You are a CTF validator. Given a vulnerable Flask application and the \
+KNOWN vulnerability details, generate a Python script that exploits it.
+
+You are NOT trying to discover the vulnerability - it has already been identified.
+Your job is to create a working exploit based on the provided vulnerability information.
 
 The exploit script must:
 1. Be a standalone Python script using only 'requests' library
 2. Take the target URL as first command line argument
 3. Print ONLY the flag (format: FLAG{...}) to stdout on success
 4. Exit with code 0 on success, non-zero on failure
+
+Use the provided exploit payload as a starting point - adapt it into a working Python script.
 
 OUTPUT FORMAT - Return ONLY valid Python code, no markdown, no explanation:
 """
@@ -35,7 +40,14 @@ class ValidationResult:
     error: str | None
 
 
-def generate_solution(app_code: str, vuln_types: list[str], user_id: int) -> Solution | None:
+def generate_solution(
+    app_code: str,
+    vuln_types: list[str],
+    vuln_description: str,
+    exploit_hint: str,
+    exploit_payload: str,
+    user_id: int,
+) -> Solution | None:
     api_key = get_user_api_key(user_id)
     if not api_key:
         return None
@@ -48,12 +60,17 @@ def generate_solution(app_code: str, vuln_types: list[str], user_id: int) -> Sol
 {app_code}
 ```
 
-Vulnerability types present: {", ".join(vuln_types)}
+KNOWN VULNERABILITY DETAILS:
+- Type: {", ".join(vuln_types)}
+- Location/Description: {vuln_description}
+- Technique: {exploit_hint}
+- Example payload: {exploit_payload}
 
-Generate an exploit script to retrieve the flag."""
+Generate a Python script that uses this known vulnerability to retrieve the flag.
+The exploit payload above shows exactly how to trigger the vulnerability - adapt it into a working script."""
 
     response = client.chat.completions.create(
-        model="gpt-4o",
+        model="gpt-4.1-mini",
         messages=[
             {"role": "system", "content": SOLUTION_PROMPT},
             {"role": "user", "content": prompt},
@@ -137,6 +154,9 @@ def validate_challenge(
     expected_flag: str,
     target_url: str,
     vuln_types: list[str],
+    vuln_description: str,
+    exploit_hint: str,
+    exploit_payload: str,
     user_id: int,
     max_retries: int = 3,
 ) -> tuple[bool, Solution | None, str]:
@@ -148,7 +168,14 @@ def validate_challenge(
         return False, None, "Container not responding"
 
     for attempt in range(max_retries):
-        solution = generate_solution(app_code, vuln_types, user_id)
+        solution = generate_solution(
+            app_code=app_code,
+            vuln_types=vuln_types,
+            vuln_description=vuln_description,
+            exploit_hint=exploit_hint,
+            exploit_payload=exploit_payload,
+            user_id=user_id,
+        )
         if not solution:
             continue
 

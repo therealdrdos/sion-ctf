@@ -39,7 +39,8 @@ OUTPUT FORMAT - Return valid JSON:
     "requirements": "flask",
     "flag": "FLAG{exact_flag_from_prompt}",
     "vuln_description": "Where the vulnerability is and how to trigger it",
-    "exploit_hint": "What technique to use"
+    "exploit_hint": "What technique to use",
+    "exploit_payload": "The exact HTTP request or payload to exploit the vulnerability (e.g., curl command, POST data, or URL with injection)"
 }"""
 
 
@@ -51,6 +52,7 @@ class CTFChallenge:
     flag: str
     vuln_description: str
     exploit_hint: str
+    exploit_payload: str
     difficulty: str
     vuln_types: list[str]
 
@@ -171,6 +173,7 @@ def generate_ctf(
                 flag=expected_flag,
                 vuln_description=data.get("vuln_description", ""),
                 exploit_hint=data.get("exploit_hint", ""),
+                exploit_payload=data.get("exploit_payload", ""),
                 difficulty=difficulty,
                 vuln_types=vuln_types,
             )
