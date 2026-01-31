@@ -15,6 +15,8 @@ def _run_migrations(conn):
     cols = [row[1] for row in conn.execute("PRAGMA table_info(challenges)").fetchall()]
     if "name" not in cols:
         conn.execute("ALTER TABLE challenges ADD COLUMN name TEXT")
+    if "exploit_spec" not in cols:
+        conn.execute("ALTER TABLE challenges ADD COLUMN exploit_spec TEXT")
 
 
 def init_db():

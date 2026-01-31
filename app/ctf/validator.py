@@ -3,11 +3,15 @@ import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import httpx
 from openai import OpenAI
 
 from app.dashboard.router import get_user_api_key, save_api_usage
+
+if TYPE_CHECKING:
+    from app.ctf.generator import ExploitSpec
 
 SOLUTION_PROMPT = """You are a CTF validator. Given a vulnerable Flask application and the \
 KNOWN vulnerability details, generate a Python script that exploits it.
@@ -188,3 +192,122 @@ def validate_challenge(
             continue
 
     return False, None, f"Failed to validate after {max_retries} attempts"
+
+
+# =============================================================================
+# Spec-Based Validation (Deterministic - No AI)
+# =============================================================================
+
+
+@dataclass
+class SpecValidationResult:
+    """Result of validating an app against an exploit spec."""
+
+    success: bool
+    exploit_worked: bool
+    safe_blocked: bool
+    error: str | None = None
+    exploit_response: str | None = None
+    safe_response: str | None = None
+
+
+def validate_with_spec(
+    target_url: str,
+    spec: "ExploitSpec",
+    expected_flag: str,
+    timeout: int = 10,
+) -> SpecValidationResult:
+    """
+    Validate a CTF app using the exploit specification.
+    
+    Tests:
+    1. Exploit request must return the flag
+    2. Safe request must NOT return the flag
+    
+    Returns SpecValidationResult with details about what passed/failed.
+    """
+    # Ensure target_url doesn't have trailing slash for clean path joining
+    base_url = target_url.rstrip("/")
+
+    # Test 1: Exploit request should return the flag
+    try:
+        if spec.exploit_method.upper() == "POST":
+            exploit_resp = httpx.post(
+                f"{base_url}{spec.exploit_path}",
+                data=spec.exploit_params,
+                timeout=timeout,
+                follow_redirects=True,
+            )
+        else:
+            exploit_resp = httpx.get(
+                f"{base_url}{spec.exploit_path}",
+                params=spec.exploit_params,
+                timeout=timeout,
+                follow_redirects=True,
+            )
+
+        exploit_text = exploit_resp.text
+        exploit_worked = expected_flag in exploit_text
+
+    except Exception as e:
+        return SpecValidationResult(
+            success=False,
+            exploit_worked=False,
+            safe_blocked=False,
+            error=f"Exploit request failed: {e}",
+        )
+
+    # Test 2: Safe request should NOT return the flag
+    try:
+        if spec.safe_method.upper() == "POST":
+            safe_resp = httpx.post(
+                f"{base_url}{spec.safe_path}",
+                data=spec.safe_params,
+                timeout=timeout,
+                follow_redirects=True,
+            )
+        else:
+            safe_resp = httpx.get(
+                f"{base_url}{spec.safe_path}",
+                params=spec.safe_params,
+                timeout=timeout,
+                follow_redirects=True,
+            )
+
+        safe_text = safe_resp.text
+        safe_blocked = expected_flag not in safe_text
+
+    except Exception as e:
+        # If safe request fails entirely, that's okay - flag is blocked
+        safe_text = ""
+        safe_blocked = True
+
+    # Determine overall success and error message
+    if exploit_worked and safe_blocked:
+        return SpecValidationResult(
+            success=True,
+            exploit_worked=True,
+            safe_blocked=True,
+            exploit_response=exploit_text[:500],
+            safe_response=safe_text[:500] if safe_text else None,
+        )
+
+    # Build error message for what went wrong
+    errors = []
+    if not exploit_worked:
+        errors.append(
+            f"Exploit ({spec.exploit_method} {spec.exploit_path}) did not return flag"
+        )
+    if not safe_blocked:
+        errors.append(
+            f"Safe request ({spec.safe_method} {spec.safe_path}) returned flag (app is broken)"
+        )
+
+    return SpecValidationResult(
+        success=False,
+        exploit_worked=exploit_worked,
+        safe_blocked=safe_blocked,
+        error="; ".join(errors),
+        exploit_response=exploit_text[:500] if exploit_text else None,
+        safe_response=safe_text[:500] if safe_text else None,
+    )

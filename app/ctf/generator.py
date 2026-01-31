@@ -49,6 +49,28 @@ OUTPUT FORMAT - Return valid JSON:
 
 
 @dataclass
+class ExploitSpec:
+    """Specification for how to exploit a vulnerability - generated BEFORE the app."""
+
+    vuln_type: str
+    difficulty: str
+
+    # The attack that SHOULD return the flag
+    exploit_method: str  # GET, POST
+    exploit_path: str  # /search, /login
+    exploit_params: dict  # {"username": "' OR 1=1--"}
+    exploit_description: str  # "SQL injection in username field"
+
+    # A normal request that should NOT return the flag
+    safe_method: str
+    safe_path: str
+    safe_params: dict
+
+    # Guidance for app generation
+    app_description: str  # "Login form with SQL backend"
+
+
+@dataclass
 class CTFChallenge:
     name: str
     app_code: str
@@ -56,13 +78,132 @@ class CTFChallenge:
     flag: str
     vuln_description: str
     exploit_hint: str
-    exploit_payload: str
     difficulty: str
     vuln_types: list[str]
+    exploit_spec: ExploitSpec | None = None  # The spec used to generate/validate
 
 
 def generate_flag() -> str:
     return f"FLAG{{{secrets.token_hex(16)}}}"
+
+
+EXPLOIT_SPEC_PROMPT = """You are a security expert designing CTF challenge specifications.
+Given a vulnerability type and difficulty, design a SPECIFIC exploit that will be used to test a vulnerable web app.
+
+You must provide:
+1. The exact HTTP request (method, path, parameters) that exploits the vulnerability
+2. A safe/normal HTTP request to the same endpoint that should NOT trigger the vulnerability
+3. A description of what the vulnerable app should look like
+
+OUTPUT FORMAT - Return valid JSON:
+{
+    "exploit_method": "GET or POST",
+    "exploit_path": "/endpoint",
+    "exploit_params": {"param": "malicious_value"},
+    "exploit_description": "How this exploit works",
+    "safe_method": "GET or POST",
+    "safe_path": "/endpoint",
+    "safe_params": {"param": "normal_value"},
+    "app_description": "What the vulnerable app should do"
+}
+
+EXAMPLES by vulnerability type:
+
+SQL Injection (easy):
+- exploit: POST /login with {"username": "' OR '1'='1", "password": "x"}
+- safe: POST /login with {"username": "admin", "password": "wrongpass"}
+
+SQL Injection (hard):
+- exploit: GET /search?q=1' UNION SELECT password FROM users--
+- safe: GET /search?q=hello
+
+Command Injection:
+- exploit: POST /ping with {"host": "127.0.0.1; cat /tmp/flag.txt"}
+- safe: POST /ping with {"host": "127.0.0.1"}
+
+Path Traversal:
+- exploit: GET /files?name=../../../tmp/flag.txt
+- safe: GET /files?name=readme.txt
+
+XSS (for flag in cookie/page):
+- exploit: GET /search?q=<script>alert(1)</script> (reflected in response)
+- safe: GET /search?q=hello
+
+IDOR:
+- exploit: GET /user/1 (accessing admin user data)
+- safe: GET /user/999 (accessing own data)
+"""
+
+
+def generate_exploit_spec(
+    vuln_type: str, difficulty: str, user_id: int
+) -> ExploitSpec | None:
+    """Generate an exploit specification BEFORE creating the vulnerable app."""
+    api_key = get_user_api_key(user_id)
+    if not api_key:
+        return None
+
+    client = OpenAI(api_key=api_key)
+
+    vuln_desc = VULN_DESCRIPTIONS.get(vuln_type, vuln_type)
+    difficulty_context = {
+        "easy": "Simple, obvious vulnerability. Single step exploit.",
+        "medium": "Requires some knowledge. May need parameter discovery.",
+        "hard": "Complex exploit. May require chaining or multiple steps.",
+    }
+
+    prompt = f"""Design an exploit specification for:
+
+Vulnerability Type: {vuln_type} - {vuln_desc}
+Difficulty: {difficulty} - {difficulty_context.get(difficulty, "")}
+
+Create a specific, testable exploit that can be validated with simple HTTP requests."""
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4.1-mini",
+            messages=[
+                {"role": "system", "content": EXPLOIT_SPEC_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.7,
+            max_tokens=1000,
+        )
+
+        if response.usage:
+            save_api_usage(
+                user_id=user_id,
+                model=response.model,
+                prompt_tokens=response.usage.prompt_tokens,
+                completion_tokens=response.usage.completion_tokens,
+                total_tokens=response.usage.total_tokens,
+                operation="exploit_spec",
+            )
+
+        content = response.choices[0].message.content
+        if not content:
+            return None
+
+        data = parse_response(content)
+        if not data:
+            return None
+
+        return ExploitSpec(
+            vuln_type=vuln_type,
+            difficulty=difficulty,
+            exploit_method=data.get("exploit_method", "GET"),
+            exploit_path=data.get("exploit_path", "/"),
+            exploit_params=data.get("exploit_params", {}),
+            exploit_description=data.get("exploit_description", ""),
+            safe_method=data.get("safe_method", "GET"),
+            safe_path=data.get("safe_path", "/"),
+            safe_params=data.get("safe_params", {}),
+            app_description=data.get("app_description", ""),
+        )
+
+    except Exception:
+        return None
 
 
 def build_prompt(prompt: str, difficulty: str, vuln_types: list[str]) -> str:
@@ -254,11 +395,213 @@ def generate_ctf(
                 flag=expected_flag,
                 vuln_description=data.get("vuln_description", ""),
                 exploit_hint=data.get("exploit_hint", ""),
-                exploit_payload=data.get("exploit_payload", ""),
                 difficulty=difficulty,
                 vuln_types=vuln_types,
+                exploit_spec=None,
             )
         except Exception:
             continue
 
     return None
+
+
+# =============================================================================
+# Test-Driven CTF Generation (Spec-First Approach)
+# =============================================================================
+
+SPEC_APP_PROMPT = """You are a CTF challenge generator. Create a vulnerable Flask app that matches the EXACT exploit specification provided.
+
+CRITICAL: The app MUST be exploitable using the EXACT request specified. This is test-driven development - the test (exploit) is already defined, you must make the app pass it.
+
+RULES:
+1. Generate a SINGLE Python file with Flask app
+2. The app MUST be vulnerable to the EXACT exploit request provided
+3. The EXACT flag provided must be returned when the exploit succeeds
+4. The safe request must NOT return the flag
+5. Use modern Flask 3.x patterns (no @app.before_first_request)
+6. App MUST run with: app.run(host='0.0.0.0', port=5000)
+
+OUTPUT FORMAT - Return valid JSON:
+{
+    "name": "Short creative challenge name (2-4 words)",
+    "app_code": "# Python Flask code"
+}"""
+
+
+def generate_ctf_from_spec(
+    spec: ExploitSpec,
+    flag: str,
+    user_id: int,
+    prompt: str = "",
+) -> CTFChallenge | None:
+    """Generate a CTF app that matches the given exploit specification."""
+    api_key = get_user_api_key(user_id)
+    if not api_key:
+        return None
+
+    client = OpenAI(api_key=api_key)
+
+    # Build detailed prompt with the exploit spec
+    user_prompt = f"""Create a vulnerable Flask app with these EXACT requirements:
+
+App Description: {spec.app_description}
+{f"User's additional request: {prompt}" if prompt else ""}
+
+=== EXPLOIT THAT MUST WORK ===
+Method: {spec.exploit_method}
+Path: {spec.exploit_path}
+Parameters: {json.dumps(spec.exploit_params)}
+How it works: {spec.exploit_description}
+
+When this request is made, the response MUST contain this flag: {flag}
+
+=== SAFE REQUEST THAT MUST NOT RETURN FLAG ===
+Method: {spec.safe_method}
+Path: {spec.safe_path}
+Parameters: {json.dumps(spec.safe_params)}
+
+This request must work (return a normal response) but must NOT return the flag.
+
+Vulnerability type: {spec.vuln_type}
+Difficulty: {spec.difficulty}
+
+The flag to embed in the app: {flag}
+"""
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4.1-mini",
+            messages=[
+                {"role": "system", "content": SPEC_APP_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.7,
+            max_tokens=4000,
+        )
+
+        if response.usage:
+            save_api_usage(
+                user_id=user_id,
+                model=response.model,
+                prompt_tokens=response.usage.prompt_tokens,
+                completion_tokens=response.usage.completion_tokens,
+                total_tokens=response.usage.total_tokens,
+                operation="ctf_from_spec",
+            )
+
+        content = response.choices[0].message.content
+        if not content:
+            return None
+
+        data = parse_response(content)
+        if not data:
+            return None
+
+        app_code = data.get("app_code", "")
+        app_code = app_code.replace("\\n", "\n").replace("\\t", "\t")
+
+        if not validate_code(app_code):
+            return None
+
+        # Verify the flag is in the code
+        if flag not in app_code:
+            return None
+
+        return CTFChallenge(
+            name=data.get("name", "Unnamed Challenge"),
+            app_code=app_code,
+            requirements="flask",
+            flag=flag,
+            vuln_description=spec.exploit_description,
+            exploit_hint=f"{spec.exploit_method} {spec.exploit_path}",
+            difficulty=spec.difficulty,
+            vuln_types=[spec.vuln_type],
+            exploit_spec=spec,
+        )
+
+    except Exception:
+        return None
+
+
+def fix_ctf_for_spec(
+    app_code: str,
+    spec: ExploitSpec,
+    flag: str,
+    error: str,
+    user_id: int,
+) -> str | None:
+    """Fix an app that doesn't match the exploit spec."""
+    api_key = get_user_api_key(user_id)
+    if not api_key:
+        return None
+
+    client = OpenAI(api_key=api_key)
+
+    prompt = f"""The Flask app below does not pass validation. Fix it.
+
+CURRENT CODE:
+```python
+{app_code}
+```
+
+VALIDATION ERROR: {error}
+
+REQUIRED EXPLOIT (must work):
+- {spec.exploit_method} {spec.exploit_path}
+- Parameters: {json.dumps(spec.exploit_params)}
+- Must return flag: {flag}
+
+SAFE REQUEST (must NOT return flag):
+- {spec.safe_method} {spec.safe_path}
+- Parameters: {json.dumps(spec.safe_params)}
+
+Fix the code so the exploit works and the safe request doesn't return the flag.
+Return ONLY the fixed Python code, no markdown or explanations."""
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4.1-mini",
+            messages=[
+                {"role": "system", "content": FIX_CODE_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.3,
+            max_tokens=4000,
+        )
+
+        if response.usage:
+            save_api_usage(
+                user_id=user_id,
+                model=response.model,
+                prompt_tokens=response.usage.prompt_tokens,
+                completion_tokens=response.usage.completion_tokens,
+                total_tokens=response.usage.total_tokens,
+                operation="ctf_fix_spec",
+            )
+
+        content = response.choices[0].message.content
+        if not content:
+            return None
+
+        code = content.strip()
+        if code.startswith("```python"):
+            code = code[9:]
+        if code.startswith("```"):
+            code = code[3:]
+        if code.endswith("```"):
+            code = code[:-3]
+
+        code = code.strip()
+
+        if not validate_code(code):
+            return None
+
+        # Verify flag still in code
+        if flag not in code:
+            return None
+
+        return code
+
+    except Exception:
+        return None

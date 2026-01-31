@@ -6,11 +6,20 @@ from collections import defaultdict
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse
 
+import json
+
 from app.auth.router import get_current_user
 from app.ctf.docker_mgr import DockerManager
-from app.ctf.generator import CTFChallenge, fix_code
-from app.ctf.generator import generate_ctf as gen_ctf
-from app.ctf.validator import validate_challenge
+from app.ctf.generator import (
+    CTFChallenge,
+    ExploitSpec,
+    fix_code,
+    fix_ctf_for_spec,
+    generate_ctf_from_spec,
+    generate_exploit_spec,
+    generate_flag,
+)
+from app.ctf.validator import validate_with_spec
 from app.db import get_connection
 
 logger = logging.getLogger(__name__)
@@ -95,7 +104,7 @@ async def generate_ctf(
     difficulty: str = Form("easy"),
     vuln_types: str = Form("sqli"),
 ):
-    """Generate, validate, and deploy a CTF challenge."""
+    """Generate CTF using test-driven approach: exploit spec first, then app."""
     user = get_current_user(request)
     if not user:
         return '<div class="p-3 bg-red-900 rounded text-red-200">Not authenticated</div>'
@@ -109,94 +118,191 @@ async def generate_ctf(
     _rate_limit[user_id] = now
 
     # Sanitize inputs
-    prompt = html.escape(prompt[:500])  # Limit length and escape HTML
+    prompt = html.escape(prompt[:500])
     difficulty = difficulty if difficulty in ("easy", "medium", "hard") else "easy"
     valid_vulns = {"sqli", "xss", "cmdi", "path", "idor", "auth"}
     vuln_list = [v for v in vuln_types.split(",") if v in valid_vulns] or ["sqli"]
+    vuln_type = vuln_list[0]  # Use first selected vulnerability
 
-    # Step 1: Generate
     msg_html = f"""
     <div class="p-3 bg-gray-700 rounded">
-        <p class="text-sm text-green-400 font-medium">Generating CTF...</p>
+        <p class="text-sm text-green-400 font-medium">Generating CTF (Test-Driven)...</p>
         <p class="text-sm text-gray-300 mt-1">{prompt}</p>
         <p class="text-xs text-gray-500 mt-2">
-            Difficulty: {difficulty} | Vulns: {", ".join(vuln_list)}
+            Difficulty: {difficulty} | Vuln: {vuln_type}
         </p>
     </div>
     """
 
-    challenge = gen_ctf(prompt, difficulty, vuln_list, user_id)
+    # Step 1: Generate exploit specification FIRST (the "test")
+    logger.info(f"Generating exploit spec for {vuln_type}/{difficulty}")
+    spec = generate_exploit_spec(vuln_type, difficulty, user_id)
 
-    if not challenge:
+    if not spec:
         return msg_html + error_msg(
-            'Failed to generate CTF. <a href="/dashboard" class="underline">Set your API key</a> '
-            "in the Dashboard or try again."
+            'Failed to generate exploit spec. <a href="/dashboard" class="underline">Set your API key</a> '
+            "or try again."
         )
 
-    # Step 2: Save to database
-    with get_connection() as conn:
-        cursor = conn.execute(
-            """INSERT INTO challenges
-               (user_id, name, vuln_type, difficulty, description, app_code, flag, status)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                user["id"],
-                challenge.name,
-                ",".join(challenge.vuln_types),
-                challenge.difficulty,
-                challenge.vuln_description,
-                challenge.app_code,
-                challenge.flag,
-                "generated",
-            ),
-        )
-        challenge_id = cursor.lastrowid
+    # Step 2: Generate the flag
+    flag = generate_flag()
 
-    # Step 3: Deploy (with auto-fix on crash)
-    url, deploy_error = deploy_challenge(challenge, challenge_id, user_id)
+    # Step 3: Generate app that matches the spec, with retry loop
+    max_attempts = 3
+    challenge = None
+    url = None
+    validation_error = None
 
-    if deploy_error:
-        return msg_html + info_msg(
-            f"CTF generated (ID: {challenge_id})",
-            challenge.vuln_description,
-            f"Deployment: {deploy_error}. Tutorial still available.",
-            challenge_id,
-        )
+    for attempt in range(max_attempts):
+        logger.info(f"Generating app from spec (attempt {attempt + 1}/{max_attempts})")
 
-    # Step 4: Validate that the flag is actually extractable
-    validated = False
-    try:
-        valid, solution, err = validate_challenge(
-            app_code=challenge.app_code,
-            expected_flag=challenge.flag,
-            target_url=url,
-            vuln_types=vuln_list,
-            vuln_description=challenge.vuln_description,
-            exploit_hint=challenge.exploit_hint,
-            exploit_payload=challenge.exploit_payload,
-            user_id=user_id,
-            max_retries=1,
-        )
-        if valid:
-            validated = True
+        # Generate or fix the app
+        if attempt == 0:
+            challenge = generate_ctf_from_spec(spec, flag, user_id, prompt)
+        elif challenge and validation_error:
+            # Fix the app based on validation error
+            fixed_code = fix_ctf_for_spec(
+                challenge.app_code, spec, flag, validation_error, user_id
+            )
+            if fixed_code:
+                challenge = CTFChallenge(
+                    name=challenge.name,
+                    app_code=fixed_code,
+                    requirements=challenge.requirements,
+                    flag=flag,
+                    vuln_description=spec.exploit_description,
+                    exploit_hint=f"{spec.exploit_method} {spec.exploit_path}",
+                    difficulty=difficulty,
+                    vuln_types=[vuln_type],
+                    exploit_spec=spec,
+                )
+            else:
+                # Fix failed, try generating fresh
+                challenge = generate_ctf_from_spec(spec, flag, user_id, prompt)
+
+        if not challenge:
+            continue
+
+        # Step 4: Save to database (or update)
+        if attempt == 0:
+            with get_connection() as conn:
+                cursor = conn.execute(
+                    """INSERT INTO challenges
+                       (user_id, name, vuln_type, difficulty, description, app_code, 
+                        flag, status, exploit_spec)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        user_id,
+                        challenge.name,
+                        vuln_type,
+                        difficulty,
+                        challenge.vuln_description,
+                        challenge.app_code,
+                        flag,
+                        "generating",
+                        serialize_spec(spec),
+                    ),
+                )
+                challenge_id = cursor.lastrowid
+        else:
+            # Update the app code
+            with get_connection() as conn:
+                conn.execute(
+                    "UPDATE challenges SET app_code = ? WHERE id = ?",
+                    (challenge.app_code, challenge_id),
+                )
+
+        # Step 5: Deploy
+        url, deploy_error = deploy_challenge(challenge, challenge_id, user_id)
+
+        if deploy_error:
+            validation_error = f"Deploy failed: {deploy_error}"
+            logger.warning(f"Deploy failed on attempt {attempt + 1}: {deploy_error}")
+            continue
+
+        # Step 6: Validate with the spec (deterministic - no AI)
+        logger.info(f"Validating with spec at {url}")
+        result = validate_with_spec(url, spec, flag)
+
+        if result.success:
+            # Success! Update status and return
             with get_connection() as conn:
                 conn.execute(
                     "UPDATE challenges SET status = ? WHERE id = ?",
                     ("validated", challenge_id),
                 )
-    except Exception as e:
-        logger.warning(f"Validation error: {e}")
+            logger.info(f"CTF validated successfully on attempt {attempt + 1}")
+            return msg_html + success_msg("CTF Ready!", url, challenge_id)
 
-    if validated:
-        return msg_html + success_msg("CTF Ready!", url, challenge_id)
+        # Validation failed - prepare for next iteration
+        validation_error = result.error
+        logger.warning(f"Validation failed on attempt {attempt + 1}: {validation_error}")
 
-    # Validation failed - warn user but still allow playing
-    return msg_html + warn_msg(
-        "CTF Deployed (unverified)",
-        url,
-        challenge_id,
-        "Flag extraction could not be verified. Challenge may be harder than intended.",
+        # Stop the container before retrying
+        mgr = get_docker_manager()
+        if mgr and url:
+            with get_connection() as conn:
+                row = conn.execute(
+                    "SELECT container_id FROM challenges WHERE id = ?", (challenge_id,)
+                ).fetchone()
+                if row and row["container_id"]:
+                    mgr.stop_container(row["container_id"])
+
+    # All attempts failed
+    if challenge and url:
+        # Last attempt - deploy anyway but warn user
+        with get_connection() as conn:
+            conn.execute(
+                "UPDATE challenges SET status = ? WHERE id = ?",
+                ("unverified", challenge_id),
+            )
+        return msg_html + warn_msg(
+            "CTF Deployed (unverified)",
+            url,
+            challenge_id,
+            f"Validation failed: {validation_error}",
+        )
+
+    return msg_html + error_msg(
+        f"Failed to generate working CTF after {max_attempts} attempts. "
+        f"Last error: {validation_error}"
     )
+
+
+def serialize_spec(spec: ExploitSpec) -> str:
+    """Serialize ExploitSpec to JSON for database storage."""
+    return json.dumps({
+        "vuln_type": spec.vuln_type,
+        "difficulty": spec.difficulty,
+        "exploit_method": spec.exploit_method,
+        "exploit_path": spec.exploit_path,
+        "exploit_params": spec.exploit_params,
+        "exploit_description": spec.exploit_description,
+        "safe_method": spec.safe_method,
+        "safe_path": spec.safe_path,
+        "safe_params": spec.safe_params,
+        "app_description": spec.app_description,
+    })
+
+
+def deserialize_spec(data: str) -> ExploitSpec | None:
+    """Deserialize ExploitSpec from JSON."""
+    try:
+        d = json.loads(data)
+        return ExploitSpec(
+            vuln_type=d["vuln_type"],
+            difficulty=d["difficulty"],
+            exploit_method=d["exploit_method"],
+            exploit_path=d["exploit_path"],
+            exploit_params=d["exploit_params"],
+            exploit_description=d["exploit_description"],
+            safe_method=d["safe_method"],
+            safe_path=d["safe_path"],
+            safe_params=d["safe_params"],
+            app_description=d["app_description"],
+        )
+    except (json.JSONDecodeError, KeyError):
+        return None
 
 
 @router.post("/check/{challenge_id}", response_class=HTMLResponse)
