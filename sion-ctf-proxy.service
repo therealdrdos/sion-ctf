@@ -1,0 +1,31 @@
+[Unit]
+Description=SION-CTF Challenge Proxy
+Documentation=https://github.com/your-repo/sion-ctf
+After=network.target docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/opt/sion-ctf
+Environment="PATH=/opt/sion-ctf/.venv/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="SECRET_KEY=your-secret-key-here"
+ExecStart=/opt/sion-ctf/.venv/bin/uvicorn app.challenge_proxy:app --host 127.0.0.1 --port 5000
+Restart=always
+RestartSec=5
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=sion-ctf-proxy
+
+# Security hardening
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/opt/sion-ctf/data
+
+[Install]
+WantedBy=multi-user.target

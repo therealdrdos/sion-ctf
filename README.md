@@ -63,6 +63,50 @@ docker run -p 8000:8000 \
     sion-ctf
 ```
 
+### Production Deployment with Challenge Proxy
+
+For production, challenges are accessed via a subdomain through a reverse proxy.
+This is required when firewalls block direct access to dynamic Docker ports.
+
+**Architecture:**
+- Main app: `sion-ctf.pro` (port 8000)
+- Challenge proxy: `challenge.sion-ctf.pro` (port 5000)
+- Challenges: `challenge.sion-ctf.pro/{challenge_id}/`
+
+**Setup:**
+
+1. Set the challenge proxy URL in your environment:
+   ```bash
+   export CHALLENGE_PROXY_URL=https://challenge.sion-ctf.pro
+   ```
+
+2. Run the challenge proxy:
+   ```bash
+   # Option A: Direct (recommended for VM deployment)
+   uv run uvicorn app.challenge_proxy:app --host 127.0.0.1 --port 5000
+
+   # Option B: Systemd service
+   sudo cp sion-ctf-proxy.service /etc/systemd/system/
+   sudo systemctl enable --now sion-ctf-proxy
+
+   # Option C: Docker Compose
+   docker compose up -d challenge-proxy
+   ```
+
+3. Configure your reverse proxy (nginx example):
+   ```nginx
+   server {
+       server_name challenge.sion-ctf.pro;
+       location / {
+           proxy_pass http://127.0.0.1:5000;
+           proxy_set_header Host $host;
+           proxy_set_header X-Real-IP $remote_addr;
+           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+           proxy_set_header X-Forwarded-Proto $scheme;
+       }
+   }
+   ```
+
 ## Usage
 
 1. Register an account
@@ -83,14 +127,16 @@ docker run -p 8000:8000 \
 
 ```
 app/
-  main.py          # FastAPI app
-  config.py        # Settings
-  db.py            # SQLite
-  auth/            # Authentication
-  ctf/             # CTF generation, validation, Docker
-  tutorial/        # Tutorial generation
-  templates/       # Jinja2 HTML
-tests/             # pytest tests
+  main.py            # Main FastAPI app (port 8000)
+  challenge_proxy.py # Challenge proxy (port 5000)
+  config.py          # Settings
+  db.py              # SQLite
+  auth/              # Authentication
+  ctf/               # CTF generation, validation, Docker
+  tutorial/          # Tutorial generation
+  templates/         # Jinja2 HTML
+tests/               # pytest tests
+sion-ctf-proxy.service  # Systemd service for proxy
 ```
 
 ## License

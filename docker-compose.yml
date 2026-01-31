@@ -9,4 +9,19 @@ services:
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - SECRET_KEY=${SECRET_KEY}
+      - CHALLENGE_PROXY_URL=${CHALLENGE_PROXY_URL:-}
     restart: unless-stopped
+
+  challenge-proxy:
+    build: .
+    command: uvicorn app.challenge_proxy:app --host 0.0.0.0 --port 5000
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - SECRET_KEY=${SECRET_KEY}
+    restart: unless-stopped
+    # Run with host network to access challenge containers on localhost
+    # Uncomment if challenges aren't accessible:
+    # network_mode: host

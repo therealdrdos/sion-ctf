@@ -11,6 +11,10 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 60 * 24
 
+    # Challenge proxy URL (where challenges are publicly accessible)
+    # Set to empty string to use internal container URLs (for local dev)
+    challenge_proxy_url: str = ""
+
 
 settings = Settings()
 

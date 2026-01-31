@@ -193,7 +193,7 @@ function showChallenge(url, info, challengeId) {
 
 {% if active %}
 document.addEventListener('DOMContentLoaded', function() {
-    showChallenge('{{ active.container_url }}', '{{ active.description|default("", true) }}', {{ active.id }});
+    showChallenge('{{ active.display_url }}', '{{ active.description|default("", true) }}', {{ active.id }});
 });
 {% endif %}
 </script>
