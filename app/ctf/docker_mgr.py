@@ -25,9 +25,42 @@ class ContainerInfo:
     url: str
 
 
+def _get_docker_client():
+    """Try multiple Docker socket locations (macOS Docker Desktop compatibility)."""
+    import os
+
+    # Try default first (respects DOCKER_HOST env var)
+    try:
+        client = docker.from_env()
+        client.ping()
+        return client
+    except Exception:
+        pass
+
+    # macOS Docker socket locations (Colima, Docker Desktop, etc.)
+    home = os.path.expanduser("~")
+    socket_paths = [
+        f"unix://{home}/.config/colima/default/docker.sock",
+        f"unix://{home}/.colima/default/docker.sock",
+        f"unix://{home}/.docker/run/docker.sock",
+        "unix:///var/run/docker.sock",
+        f"unix://{home}/Library/Containers/com.docker.docker/Data/docker.sock",
+    ]
+
+    for sock in socket_paths:
+        try:
+            client = docker.DockerClient(base_url=sock)
+            client.ping()
+            return client
+        except Exception:
+            continue
+
+    raise docker.errors.DockerException("Could not connect to Docker daemon")
+
+
 class DockerManager:
     def __init__(self):
-        self.client = docker.from_env()
+        self.client = _get_docker_client()
         self.network_name = "sion-ctf-net"
         self._ensure_network()
 
@@ -74,7 +107,7 @@ class DockerManager:
                 image_id,
                 detach=True,
                 name=f"{name_prefix}-{int(time.time())}",
-                network=self.network_name,
+                ports={"5000/tcp": None},
                 mem_limit=memory_limit,
                 cpu_quota=cpu_quota,
                 auto_remove=False,
@@ -87,32 +120,23 @@ class DockerManager:
                     break
                 time.sleep(0.5)
 
-            # Get IP from network
-            networks = container.attrs.get("NetworkSettings", {}).get("Networks", {})
-            net_info = networks.get(self.network_name, {})
-            ip_address = net_info.get("IPAddress", "")
+            # Wait for Flask to start
+            time.sleep(2)
 
-            if not ip_address:
-                # Fallback to port mapping
-                container.reload()
-                ports = container.attrs.get("NetworkSettings", {}).get("Ports", {})
-                if "5000/tcp" in ports and ports["5000/tcp"]:
-                    host_port = ports["5000/tcp"][0]["HostPort"]
-                    return ContainerInfo(
-                        container_id=container.id,
-                        image_id=image_id,
-                        ip_address="127.0.0.1",
-                        port=int(host_port),
-                        url=f"http://127.0.0.1:{host_port}",
-                    )
+            # Get the published host port
+            container.reload()
+            ports = container.attrs.get("NetworkSettings", {}).get("Ports", {})
+            if "5000/tcp" in ports and ports["5000/tcp"]:
+                host_port = ports["5000/tcp"][0]["HostPort"]
+                return ContainerInfo(
+                    container_id=container.id,
+                    image_id=image_id,
+                    ip_address="127.0.0.1",
+                    port=int(host_port),
+                    url=f"http://127.0.0.1:{host_port}",
+                )
 
-            return ContainerInfo(
-                container_id=container.id,
-                image_id=image_id,
-                ip_address=ip_address,
-                port=5000,
-                url=f"http://{ip_address}:5000",
-            )
+            return None
 
         except (ContainerError, ImageNotFound):
             return None

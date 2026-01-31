@@ -25,7 +25,7 @@ IMPORTANT RULES:
 4. The flag must be hidden and only accessible through successful exploitation
 5. Keep the code minimal and focused on the vulnerability
 6. Include basic HTML templates inline using render_template_string
-7. The app should run on port 5000
+7. The app MUST run with: app.run(host='0.0.0.0', port=5000)
 
 OUTPUT FORMAT - Return valid JSON with these exact keys:
 {
@@ -79,7 +79,6 @@ Remember: The flag should only be retrievable by successfully exploiting the vul
 
 def parse_response(content: str) -> dict | None:
     try:
-        # Try to extract JSON from response
         if "```json" in content:
             content = content.split("```json")[1].split("```")[0]
         elif "```" in content:
@@ -103,18 +102,22 @@ def generate_ctf(prompt: str, difficulty: str, vuln_types: list[str]) -> CTFChal
     if not settings.openai_api_key:
         return None
 
-    client = OpenAI(api_key=settings.openai_api_key)
-    user_prompt = build_prompt(prompt, difficulty, vuln_types)
+    try:
+        client = OpenAI(api_key=settings.openai_api_key)
+        user_prompt = build_prompt(prompt, difficulty, vuln_types)
 
-    response = client.chat.completions.create(
-        model="gpt-4o",
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt},
-        ],
-        temperature=0.7,
-        max_tokens=4000,
-    )
+        response = client.chat.completions.create(
+            model="gpt-4.1-mini",
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.7,
+            max_tokens=4000,
+        )
+    except Exception:
+        return None
 
     content = response.choices[0].message.content
     if not content:
@@ -125,6 +128,9 @@ def generate_ctf(prompt: str, difficulty: str, vuln_types: list[str]) -> CTFChal
         return None
 
     app_code = data.get("app_code", "")
+    # Fix escaped newlines - model sometimes outputs \\n instead of \n
+    app_code = app_code.replace("\\n", "\n").replace("\\t", "\t")
+
     if not validate_code(app_code):
         return None
 
