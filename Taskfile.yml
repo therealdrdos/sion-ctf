@@ -1,0 +1,25 @@
+version: '3'
+
+dotenv: ['.env']
+
+tasks:
+  dev:
+    desc: Run main app (port 8000)
+    cmds:
+      - uv run uvicorn app.main:app --reload --port 8000
+
+  proxy:
+    desc: Run challenge proxy (port 5000)
+    cmds:
+      - uv run uvicorn app.challenge_proxy:app --reload --port 5000
+
+  test:
+    desc: Run tests
+    cmds:
+      - uv run pytest tests/ -v
+
+  lint:
+    desc: Lint and format
+    cmds:
+      - uv run ruff check --fix app/ tests/
+      - uv run ruff format app/ tests/
