@@ -51,13 +51,21 @@
         <div class="mb-6">
             <label class="block text-sm text-gray-400 mb-2">Difficulty</label>
             <div class="flex gap-2">
-                {% for level in ['easy', 'medium', 'hard'] %}
-                <button type="button" onclick="setDifficulty('{{ level }}')"
-                        id="diff-{{ level }}"
-                        class="px-3 py-1 rounded text-sm border border-gray-600 hover:border-green-500 {% if level == 'easy' %}bg-green-600 border-green-600{% endif %}">
-                    {{ level|capitalize }}
+                <button type="button" onclick="setDifficulty('easy')"
+                        id="diff-easy"
+                        class="px-3 py-1 rounded text-sm border border-green-600 bg-green-600">
+                    Easy
                 </button>
-                {% endfor %}
+                <button type="button" onclick="setDifficulty('medium')"
+                        id="diff-medium"
+                        class="px-3 py-1 rounded text-sm border border-gray-600">
+                    Medium
+                </button>
+                <button type="button" onclick="setDifficulty('hard')"
+                        id="diff-hard"
+                        class="px-3 py-1 rounded text-sm border border-gray-600">
+                    Hard
+                </button>
             </div>
         </div>
 
@@ -118,12 +126,20 @@
 <script>
 function setDifficulty(level) {
     document.getElementById('difficulty-input').value = level;
+    const colors = {
+        easy: ['bg-green-600', 'border-green-600'],
+        medium: ['bg-yellow-600', 'border-yellow-600'],
+        hard: ['bg-red-600', 'border-red-600']
+    };
     ['easy', 'medium', 'hard'].forEach(l => {
         const btn = document.getElementById('diff-' + l);
+        const [bg, border] = colors[l];
         if (l === level) {
-            btn.classList.add('bg-green-600', 'border-green-600');
+            btn.classList.add(bg, border);
+            btn.classList.remove('border-gray-600');
         } else {
-            btn.classList.remove('bg-green-600', 'border-green-600');
+            btn.classList.remove(bg, border);
+            btn.classList.add('border-gray-600');
         }
     });
 }
