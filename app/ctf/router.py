@@ -106,10 +106,11 @@ async def generate_ctf(
     with get_connection() as conn:
         cursor = conn.execute(
             """INSERT INTO challenges
-               (user_id, vuln_type, difficulty, description, app_code, flag, status)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+               (user_id, name, vuln_type, difficulty, description, app_code, flag, status)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 user["id"],
+                challenge.name,
                 ",".join(challenge.vuln_types),
                 challenge.difficulty,
                 challenge.vuln_description,

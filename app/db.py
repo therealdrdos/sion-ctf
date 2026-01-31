@@ -10,6 +10,13 @@ def get_db_path() -> Path:
     return DB_PATH
 
 
+def _run_migrations(conn):
+    """Run schema migrations."""
+    cols = [row[1] for row in conn.execute("PRAGMA table_info(challenges)").fetchall()]
+    if "name" not in cols:
+        conn.execute("ALTER TABLE challenges ADD COLUMN name TEXT")
+
+
 def init_db():
     """Create tables if they don't exist."""
     with get_connection() as conn:
@@ -24,6 +31,7 @@ def init_db():
             CREATE TABLE IF NOT EXISTS challenges (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
+                name TEXT,
                 vuln_type TEXT NOT NULL,
                 difficulty TEXT NOT NULL,
                 description TEXT,
@@ -44,6 +52,7 @@ def init_db():
                 FOREIGN KEY (user_id) REFERENCES users(id)
             );
         """)
+        _run_migrations(conn)
 
 
 @contextmanager

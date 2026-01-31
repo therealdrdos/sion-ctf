@@ -29,6 +29,7 @@ IMPORTANT RULES:
 
 OUTPUT FORMAT - Return valid JSON with these exact keys:
 {
+    "name": "Short creative challenge name (2-4 words)",
     "app_code": "# Full Python Flask application code here",
     "requirements": "flask\\nwerkzeug",
     "flag": "FLAG{the_actual_flag}",
@@ -39,6 +40,7 @@ OUTPUT FORMAT - Return valid JSON with these exact keys:
 
 @dataclass
 class CTFChallenge:
+    name: str
     app_code: str
     requirements: str
     flag: str
@@ -135,6 +137,7 @@ def generate_ctf(prompt: str, difficulty: str, vuln_types: list[str]) -> CTFChal
         return None
 
     return CTFChallenge(
+        name=data.get("name", "Unnamed Challenge"),
         app_code=app_code,
         requirements=data.get("requirements", "flask"),
         flag=data.get("flag", ""),

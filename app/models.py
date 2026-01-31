@@ -15,6 +15,7 @@ class User:
 class Challenge:
     id: int
     user_id: int
+    name: Optional[str]
     vuln_type: str
     difficulty: str
     description: Optional[str]

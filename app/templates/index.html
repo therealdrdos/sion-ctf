@@ -112,9 +112,12 @@
             <h3 class="text-lg font-bold mb-3">Recent Challenges</h3>
             <div class="space-y-2">
                 {% for c in challenges %}
-                <div class="flex items-center justify-between p-2 bg-gray-700 rounded text-sm">
-                    <span>{{ c.vuln_type }} ({{ c.difficulty }})</span>
-                    <a href="/tutorial/{{ c.id }}" class="text-blue-400 hover:underline">Tutorial</a>
+                <div class="p-2 bg-gray-700 rounded text-sm">
+                    <div class="flex items-center justify-between">
+                        <span class="font-medium">{{ c.name or c.vuln_type }}</span>
+                        <a href="/tutorial/{{ c.id }}" class="text-blue-400 hover:underline">Tutorial</a>
+                    </div>
+                    <div class="text-xs text-gray-400 mt-1">{{ c.difficulty }} &middot; {{ c.vuln_type }}</div>
                 </div>
                 {% endfor %}
             </div>
