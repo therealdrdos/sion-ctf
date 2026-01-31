@@ -9,6 +9,7 @@ from fastapi.responses import HTMLResponse
 import json
 
 from app.auth.router import get_current_user
+from app.config import settings
 from app.ctf.aider_fixer import fix_crash_with_aider, fix_validation_with_aider
 from app.ctf.docker_mgr import DockerManager
 from app.ctf.generator import (
@@ -20,7 +21,7 @@ from app.ctf.generator import (
 )
 from app.ctf.validator import validate_with_spec
 from app.dashboard.router import get_user_api_key
-from app.db import get_connection
+from app.db import generate_public_path, get_connection
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/ctf", tags=["ctf"])
@@ -42,6 +43,17 @@ def get_docker_manager() -> DockerManager | None:
             logger.warning(f"Docker not available: {e}")
             return None
     return _docker_mgr
+
+
+def get_public_url(public_path: str, container_url: str) -> str:
+    """Get the public URL for a challenge.
+
+    If CHALLENGE_PROXY_URL is set, returns the proxy URL with the public_path.
+    Otherwise, returns the internal container URL (for local development).
+    """
+    if settings.challenge_proxy_url:
+        return f"{settings.challenge_proxy_url.rstrip('/')}/{public_path}/"
+    return container_url
 
 
 def deploy_challenge(
@@ -208,15 +220,17 @@ async def generate_ctf(
 
         # Step 4: Save to database (or update)
         if attempt == 0:
+            public_path = generate_public_path()
             with get_connection() as conn:
                 cursor = conn.execute(
                     """INSERT INTO challenges
-                       (user_id, name, vuln_type, difficulty, description, app_code, 
+                       (user_id, name, public_path, vuln_type, difficulty, description, app_code, 
                         flag, status, exploit_spec)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         user_id,
                         challenge.name,
+                        public_path,
                         vuln_type,
                         difficulty,
                         challenge.vuln_description,
@@ -255,7 +269,9 @@ async def generate_ctf(
                     ("validated", challenge_id),
                 )
             logger.info(f"CTF validated successfully on attempt {attempt + 1}")
-            return msg_html + success_msg("CTF Ready!", url, challenge_id)
+            # Return the public URL for the user
+            display_url = get_public_url(public_path, url)
+            return msg_html + success_msg("CTF Ready!", display_url, challenge_id)
 
         # Validation failed - prepare for next iteration
         validation_error = result.error
@@ -279,9 +295,11 @@ async def generate_ctf(
                 "UPDATE challenges SET status = ? WHERE id = ?",
                 ("unverified", challenge_id),
             )
+        # Return the public URL for the user
+        display_url = get_public_url(public_path, url)
         return msg_html + warn_msg(
             "CTF Deployed (unverified)",
-            url,
+            display_url,
             challenge_id,
             f"Validation failed: {validation_error}",
         )

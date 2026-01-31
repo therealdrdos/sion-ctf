@@ -1,8 +1,19 @@
+import secrets
 import sqlite3
+import string
 from contextlib import contextmanager
 from pathlib import Path
 
 DB_PATH = Path("data/sion.db")
+
+# Characters for public_path (URL-safe, easy to read/type)
+PUBLIC_PATH_CHARS = string.ascii_lowercase + string.digits
+PUBLIC_PATH_LENGTH = 8
+
+
+def generate_public_path() -> str:
+    """Generate a unique short ID for challenge public URLs."""
+    return "".join(secrets.choice(PUBLIC_PATH_CHARS) for _ in range(PUBLIC_PATH_LENGTH))
 
 
 def get_db_path() -> Path:
@@ -17,6 +28,8 @@ def _run_migrations(conn):
         conn.execute("ALTER TABLE challenges ADD COLUMN name TEXT")
     if "exploit_spec" not in cols:
         conn.execute("ALTER TABLE challenges ADD COLUMN exploit_spec TEXT")
+    if "public_path" not in cols:
+        conn.execute("ALTER TABLE challenges ADD COLUMN public_path TEXT UNIQUE")
 
 
 def init_db():
@@ -34,6 +47,7 @@ def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
                 name TEXT,
+                public_path TEXT UNIQUE,
                 vuln_type TEXT NOT NULL,
                 difficulty TEXT NOT NULL,
                 description TEXT,

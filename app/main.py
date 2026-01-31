@@ -65,6 +65,7 @@ app.include_router(tutorial_router)
 
 @app.get("/")
 async def index(request: Request):
+    from app.config import settings
     from app.db import get_connection
 
     user = get_current_user(request)
@@ -82,12 +83,24 @@ async def index(request: Request):
             (user["id"],),
         ).fetchone()
 
+    # Calculate public URL for active challenge
+    active_dict = None
+    if active:
+        active_dict = dict(active)
+        # Use public URL if proxy is configured
+        if settings.challenge_proxy_url and active_dict.get("public_path"):
+            active_dict["display_url"] = (
+                f"{settings.challenge_proxy_url.rstrip('/')}/{active_dict['public_path']}/"
+            )
+        else:
+            active_dict["display_url"] = active_dict.get("container_url", "")
+
     return templates.TemplateResponse(
         request,
         "index.html",
         {
             "user": user,
             "challenges": [dict(c) for c in challenges],
-            "active": dict(active) if active else None,
+            "active": active_dict,
         },
     )
