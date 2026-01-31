@@ -11,6 +11,117 @@
 {% endblock %}
 
 {% block content %}
-<h1 class="text-3xl font-bold mb-8">Welcome, {{ user.username }}</h1>
-<p class="text-gray-400">CTF challenge interface coming soon.</p>
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <!-- Chat/Main Area -->
+    <div class="lg:col-span-2 bg-gray-800 rounded-lg p-6">
+        <h2 class="text-xl font-bold mb-4">CTF Generator</h2>
+
+        <!-- Messages Area -->
+        <div id="messages" class="space-y-4 mb-6 min-h-[200px] max-h-[400px] overflow-y-auto">
+            <div class="p-3 bg-gray-700 rounded">
+                <p class="text-sm text-gray-300">Configure your CTF challenge using the panel on the right, then describe what kind of vulnerable application you want to hack.</p>
+            </div>
+        </div>
+
+        <!-- Input Form -->
+        <form id="ctf-form" hx-post="/ctf/generate" hx-target="#messages" hx-swap="beforeend" hx-indicator="#spinner">
+            <input type="hidden" name="difficulty" id="difficulty-input" value="easy">
+            <input type="hidden" name="vuln_types" id="vuln-types-input" value="sqli">
+
+            <div class="flex gap-2">
+                <input type="text" name="prompt" placeholder="Describe the vulnerable app you want..."
+                       class="flex-1 px-4 py-2 bg-gray-700 border border-gray-600 rounded focus:border-green-500 focus:outline-none"
+                       required>
+                <button type="submit" class="px-6 py-2 bg-green-600 hover:bg-green-700 rounded font-medium flex items-center gap-2">
+                    <span>Generate</span>
+                    <svg id="spinner" class="htmx-indicator w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                    </svg>
+                </button>
+            </div>
+        </form>
+    </div>
+
+    <!-- Configuration Panel -->
+    <div class="bg-gray-800 rounded-lg p-6">
+        <h2 class="text-xl font-bold mb-4">Configuration</h2>
+
+        <!-- Difficulty -->
+        <div class="mb-6">
+            <label class="block text-sm text-gray-400 mb-2">Difficulty</label>
+            <div class="flex gap-2">
+                {% for level in ['easy', 'medium', 'hard'] %}
+                <button type="button" onclick="setDifficulty('{{ level }}')"
+                        id="diff-{{ level }}"
+                        class="px-3 py-1 rounded text-sm border border-gray-600 hover:border-green-500 {% if level == 'easy' %}bg-green-600 border-green-600{% endif %}">
+                    {{ level|capitalize }}
+                </button>
+                {% endfor %}
+            </div>
+        </div>
+
+        <!-- Vulnerability Types -->
+        <div class="mb-6">
+            <label class="block text-sm text-gray-400 mb-2">Vulnerability Types</label>
+            <div class="space-y-2">
+                {% set vulns = [
+                    ('sqli', 'SQL Injection'),
+                    ('xss', 'Cross-Site Scripting'),
+                    ('cmdi', 'Command Injection'),
+                    ('path', 'Path Traversal'),
+                    ('idor', 'IDOR'),
+                    ('auth', 'Broken Auth')
+                ] %}
+                {% for id, label in vulns %}
+                <label class="flex items-center gap-2 cursor-pointer">
+                    <input type="checkbox" value="{{ id }}" onchange="updateVulnTypes()"
+                           class="vuln-checkbox w-4 h-4 rounded bg-gray-700 border-gray-600"
+                           {% if id == 'sqli' %}checked{% endif %}>
+                    <span class="text-sm">{{ label }}</span>
+                </label>
+                {% endfor %}
+            </div>
+        </div>
+
+        <!-- Active Challenge -->
+        <div id="active-challenge" class="hidden">
+            <h3 class="text-lg font-bold mb-2 text-green-400">Active Challenge</h3>
+            <div id="challenge-info" class="text-sm text-gray-300"></div>
+            <a id="challenge-link" href="#" target="_blank"
+               class="inline-block mt-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded text-sm">
+                Open Challenge
+            </a>
+            <a href="/tutorial" class="inline-block mt-2 ml-2 px-4 py-2 bg-gray-600 hover:bg-gray-700 rounded text-sm">
+                View Tutorial
+            </a>
+        </div>
+    </div>
+</div>
+
+<script>
+function setDifficulty(level) {
+    document.getElementById('difficulty-input').value = level;
+    ['easy', 'medium', 'hard'].forEach(l => {
+        const btn = document.getElementById('diff-' + l);
+        if (l === level) {
+            btn.classList.add('bg-green-600', 'border-green-600');
+        } else {
+            btn.classList.remove('bg-green-600', 'border-green-600');
+        }
+    });
+}
+
+function updateVulnTypes() {
+    const checked = Array.from(document.querySelectorAll('.vuln-checkbox:checked'))
+        .map(cb => cb.value);
+    document.getElementById('vuln-types-input').value = checked.join(',');
+}
+
+function showChallenge(url, info) {
+    document.getElementById('active-challenge').classList.remove('hidden');
+    document.getElementById('challenge-link').href = url;
+    document.getElementById('challenge-info').textContent = info;
+}
+</script>
 {% endblock %}
