@@ -159,6 +159,27 @@ async def generate_ctf(
     )
 
 
+@router.post("/check/{challenge_id}", response_class=HTMLResponse)
+async def check_flag(request: Request, challenge_id: int, flag: str = Form(...)):
+    """Check if submitted flag is correct."""
+    user = get_current_user(request)
+    if not user:
+        return error_msg("Not authenticated")
+
+    with get_connection() as conn:
+        challenge = conn.execute(
+            "SELECT flag FROM challenges WHERE id = ? AND user_id = ?",
+            (challenge_id, user["id"]),
+        ).fetchone()
+
+    if not challenge:
+        return error_msg("Challenge not found")
+
+    if flag.strip() == challenge["flag"]:
+        return '<div class="p-2 bg-green-900 rounded text-green-200 text-sm mt-2">Correct!</div>'
+    return '<div class="p-2 bg-red-900 rounded text-red-200 text-sm mt-2">Wrong flag</div>'
+
+
 @router.post("/stop/{challenge_id}", response_class=HTMLResponse)
 async def stop_challenge(request: Request, challenge_id: int):
     """Stop a running challenge container."""
@@ -228,6 +249,14 @@ def success_msg(title: str, desc: str, url: str, challenge_id: int, hint: str) -
                 Stop
             </button>
         </div>
+        <form hx-post="/ctf/check/{challenge_id}" hx-target="#flag-result-{challenge_id}" hx-swap="innerHTML" class="mt-3">
+            <div class="flex gap-2">
+                <input type="text" name="flag" placeholder="FLAG{{...}}"
+                       class="flex-1 px-3 py-1 bg-gray-800 border border-gray-600 rounded text-sm focus:border-green-500 focus:outline-none">
+                <button type="submit" class="px-3 py-1 bg-green-700 hover:bg-green-600 rounded text-sm">Check</button>
+            </div>
+            <div id="flag-result-{challenge_id}"></div>
+        </form>
     </div>
     <script>
         showChallenge("{url}", "{desc}", {challenge_id});

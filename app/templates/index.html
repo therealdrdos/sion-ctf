@@ -96,14 +96,24 @@
         <div id="active-challenge" class="hidden">
             <h3 class="text-lg font-bold mb-2 text-green-400">Active Challenge</h3>
             <div id="challenge-info" class="text-sm text-gray-300"></div>
-            <a id="challenge-link" href="#" target="_blank"
-               class="inline-block mt-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded text-sm">
-                Open Challenge
-            </a>
-            <a id="tutorial-link" href="#"
-               class="inline-block mt-2 ml-2 px-4 py-2 bg-gray-600 hover:bg-gray-700 rounded text-sm">
-                View Tutorial
-            </a>
+            <div class="mt-2 flex gap-2">
+                <a id="challenge-link" href="#" target="_blank"
+                   class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded text-sm">
+                    Open
+                </a>
+                <a id="tutorial-link" href="#"
+                   class="px-4 py-2 bg-gray-600 hover:bg-gray-700 rounded text-sm">
+                    Tutorial
+                </a>
+            </div>
+            <form id="active-flag-form" class="mt-3">
+                <div class="flex gap-2">
+                    <input type="text" name="flag" placeholder="FLAG{...}"
+                           class="flex-1 px-3 py-1 bg-gray-700 border border-gray-600 rounded text-sm focus:border-green-500 focus:outline-none">
+                    <button type="submit" class="px-3 py-1 bg-green-700 hover:bg-green-600 rounded text-sm">Check</button>
+                </div>
+                <div id="active-flag-result"></div>
+            </form>
         </div>
 
         <!-- Challenge History -->
@@ -158,6 +168,11 @@ function showChallenge(url, info, challengeId) {
     document.getElementById('challenge-link').href = url;
     document.getElementById('challenge-info').textContent = info;
     document.getElementById('tutorial-link').href = '/tutorial/' + challengeId;
+    const form = document.getElementById('active-flag-form');
+    form.setAttribute('hx-post', '/ctf/check/' + challengeId);
+    form.setAttribute('hx-target', '#active-flag-result');
+    form.setAttribute('hx-swap', 'innerHTML');
+    htmx.process(form);
 }
 </script>
 {% endblock %}
