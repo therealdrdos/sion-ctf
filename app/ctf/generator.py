@@ -1,11 +1,14 @@
 import ast
 import json
+import logging
 import secrets
 from dataclasses import dataclass
 
 from openai import OpenAI
 
 from app.dashboard.router import get_user_api_key, save_api_usage
+
+logger = logging.getLogger(__name__)
 
 VULN_DESCRIPTIONS = {
     "sqli": "SQL Injection - User input is concatenated into SQL queries without sanitization",
@@ -141,6 +144,7 @@ def generate_exploit_spec(
     """Generate an exploit specification BEFORE creating the vulnerable app."""
     api_key = get_user_api_key(user_id)
     if not api_key:
+        logger.warning("[EXPLOIT SPEC] No API key available")
         return None
 
     client = OpenAI(api_key=api_key)
@@ -159,6 +163,12 @@ Difficulty: {difficulty} - {difficulty_context.get(difficulty, "")}
 
 Create a specific, testable exploit that can be validated with simple HTTP requests."""
 
+    logger.info("=" * 60)
+    logger.info("[EXPLOIT SPEC] GENERATING SPEC")
+    logger.info("=" * 60)
+    logger.info(f"[SYSTEM] {EXPLOIT_SPEC_PROMPT[:200]}...")
+    logger.info(f"[USER] {prompt}")
+
     try:
         response = client.chat.completions.create(
             model="gpt-4.1-mini",
@@ -172,6 +182,11 @@ Create a specific, testable exploit that can be validated with simple HTTP reque
         )
 
         if response.usage:
+            logger.info(
+                f"[TOKENS] prompt={response.usage.prompt_tokens}, "
+                f"completion={response.usage.completion_tokens}, "
+                f"total={response.usage.total_tokens}"
+            )
             save_api_usage(
                 user_id=user_id,
                 model=response.model,
@@ -182,14 +197,18 @@ Create a specific, testable exploit that can be validated with simple HTTP reque
             )
 
         content = response.choices[0].message.content
+        logger.info(f"[ASSISTANT] {content}")
+
         if not content:
+            logger.warning("[EXPLOIT SPEC] Empty response")
             return None
 
         data = parse_response(content)
         if not data:
+            logger.warning("[EXPLOIT SPEC] Failed to parse response")
             return None
 
-        return ExploitSpec(
+        spec = ExploitSpec(
             vuln_type=vuln_type,
             difficulty=difficulty,
             exploit_method=data.get("exploit_method", "GET"),
@@ -201,8 +220,11 @@ Create a specific, testable exploit that can be validated with simple HTTP reque
             safe_params=data.get("safe_params", {}),
             app_description=data.get("app_description", ""),
         )
+        logger.info(f"[EXPLOIT SPEC] Created: {spec.exploit_method} {spec.exploit_path}")
+        return spec
 
-    except Exception:
+    except Exception as e:
+        logger.error(f"[EXPLOIT SPEC] Error: {e}")
         return None
 
 
@@ -406,25 +428,49 @@ def generate_ctf(
 
 
 # =============================================================================
-# Test-Driven CTF Generation (Spec-First Approach)
+# Test-Driven CTF Generation (Spec-First Approach with Templates)
 # =============================================================================
 
-SPEC_APP_PROMPT = """You are a CTF challenge generator. Create a vulnerable Flask app that matches the EXACT exploit specification provided.
+from app.ctf.templates import get_template_for_vuln
 
-CRITICAL: The app MUST be exploitable using the EXACT request specified. This is test-driven development - the test (exploit) is already defined, you must make the app pass it.
+TEMPLATE_PROMPT = """You are a CTF challenge generator. You will ADD vulnerable code to an existing Flask app template.
+
+IMPORTANT: You are NOT writing a complete app. The template already has:
+- Flask app setup
+- Database/file/auth setup (depending on template)
+- /health endpoint
+- Basic home page
+
+Your job is to ADD the vulnerable endpoint(s) that match the exploit specification.
 
 RULES:
-1. Generate a SINGLE Python file with Flask app
-2. The app MUST be vulnerable to the EXACT exploit request provided
-3. The EXACT flag provided must be returned when the exploit succeeds
-4. The safe request must NOT return the flag
-5. Use modern Flask 3.x patterns (no @app.before_first_request)
-6. App MUST run with: app.run(host='0.0.0.0', port=5000)
+1. Return ONLY the new code to INSERT (routes, functions, etc.)
+2. The exploit request MUST return the flag when exploited
+3. The safe request must work but NOT return the flag
+4. Do NOT include imports, app setup, or if __name__ - those exist in template
+5. Use the template's existing functions (get_db, setup_files, etc.)
 
 OUTPUT FORMAT - Return valid JSON:
 {
     "name": "Short creative challenge name (2-4 words)",
-    "app_code": "# Python Flask code"
+    "vulnerable_code": "# ONLY the new routes/functions to add",
+    "init_code": "# Optional: code to add to init_db() or setup(), or empty string"
+}
+
+EXAMPLES:
+
+For SQL injection template, you might return:
+{
+    "name": "Query Leaker",
+    "vulnerable_code": "@app.route('/search')\\ndef search():\\n    term = request.args.get('q', '')\\n    db = get_db()\\n    # VULNERABLE: direct string concatenation\\n    results = db.execute(f\\\"SELECT * FROM users WHERE username LIKE '%{term}%'\\\").fetchall()\\n    return str([dict(r) for r in results])",
+    "init_code": ""
+}
+
+For command injection template:
+{
+    "name": "Ping Pong",
+    "vulnerable_code": "@app.route('/ping', methods=['POST'])\\ndef ping():\\n    host = request.form.get('host', '')\\n    # VULNERABLE: command injection\\n    output = subprocess.check_output(f'ping -c 1 {host}', shell=True)\\n    return output",
+    "init_code": ""
 }"""
 
 
@@ -434,18 +480,31 @@ def generate_ctf_from_spec(
     user_id: int,
     prompt: str = "",
 ) -> CTFChallenge | None:
-    """Generate a CTF app that matches the given exploit specification."""
+    """Generate a CTF app using a template + AI-generated vulnerable code."""
     api_key = get_user_api_key(user_id)
     if not api_key:
         return None
 
     client = OpenAI(api_key=api_key)
 
-    # Build detailed prompt with the exploit spec
-    user_prompt = f"""Create a vulnerable Flask app with these EXACT requirements:
+    # Load the appropriate template
+    template_name, template_code = get_template_for_vuln(spec.vuln_type)
+    logger.info(f"[GENERATOR] Using template: {template_name}")
 
-App Description: {spec.app_description}
-{f"User's additional request: {prompt}" if prompt else ""}
+    # Inject the flag into the template
+    template_code = template_code.replace('FLAG = "FLAG{placeholder}"', f'FLAG = "{flag}"')
+
+    # Build prompt asking AI to add ONLY the vulnerable parts
+    user_prompt = f"""Add vulnerable endpoint(s) to this {template_name} Flask template.
+
+TEMPLATE FEATURES:
+- Template type: {template_name}
+- Has /health endpoint
+- Has home page at /
+{"- Has get_db() for database access" if template_name == "sqlite" else ""}
+{"- Has USERS dict with admin having FLAG as secret" if template_name == "auth" else ""}
+{"- Has FILES_DIR and FLAG_FILE setup" if template_name == "files" else ""}
+{"- Has FLAG_FILE at /tmp/flag.txt" if template_name == "shell" else ""}
 
 === EXPLOIT THAT MUST WORK ===
 Method: {spec.exploit_method}
@@ -453,55 +512,77 @@ Path: {spec.exploit_path}
 Parameters: {json.dumps(spec.exploit_params)}
 How it works: {spec.exploit_description}
 
-When this request is made, the response MUST contain this flag: {flag}
+When this request is made, the response MUST contain: {flag}
 
-=== SAFE REQUEST THAT MUST NOT RETURN FLAG ===
+=== SAFE REQUEST (must NOT return flag) ===
 Method: {spec.safe_method}
 Path: {spec.safe_path}
 Parameters: {json.dumps(spec.safe_params)}
 
-This request must work (return a normal response) but must NOT return the flag.
+{f"User's theme request: {prompt}" if prompt else ""}
 
-Vulnerability type: {spec.vuln_type}
-Difficulty: {spec.difficulty}
+Remember: Return ONLY the new vulnerable routes/functions to add, not the whole app."""
 
-The flag to embed in the app: {flag}
-"""
+    logger.info("=" * 60)
+    logger.info("[GENERATOR] CTF FROM TEMPLATE")
+    logger.info("=" * 60)
+    logger.info(f"[SYSTEM] {TEMPLATE_PROMPT[:200]}...")
+    logger.info(f"[USER] {user_prompt}")
 
     try:
         response = client.chat.completions.create(
             model="gpt-4.1-mini",
             messages=[
-                {"role": "system", "content": SPEC_APP_PROMPT},
+                {"role": "system", "content": TEMPLATE_PROMPT},
                 {"role": "user", "content": user_prompt},
             ],
             response_format={"type": "json_object"},
             temperature=0.7,
-            max_tokens=4000,
+            max_tokens=2000,  # Reduced since we only need partial code
         )
 
         if response.usage:
+            logger.info(
+                f"[TOKENS] prompt={response.usage.prompt_tokens}, "
+                f"completion={response.usage.completion_tokens}, "
+                f"total={response.usage.total_tokens}"
+            )
             save_api_usage(
                 user_id=user_id,
                 model=response.model,
                 prompt_tokens=response.usage.prompt_tokens,
                 completion_tokens=response.usage.completion_tokens,
                 total_tokens=response.usage.total_tokens,
-                operation="ctf_from_spec",
+                operation="ctf_from_template",
             )
 
         content = response.choices[0].message.content
+        logger.info(f"[ASSISTANT] {content}")
+
         if not content:
+            logger.warning("[GENERATOR] Empty response from AI")
             return None
 
         data = parse_response(content)
         if not data:
+            logger.warning("[GENERATOR] Failed to parse response")
             return None
 
-        app_code = data.get("app_code", "")
-        app_code = app_code.replace("\\n", "\n").replace("\\t", "\t")
+        vulnerable_code = data.get("vulnerable_code", "")
+        init_code = data.get("init_code", "")
+        logger.info(f"[GENERATOR] Got vulnerable_code ({len(vulnerable_code)} chars)")
+
+        # Clean up escaped characters
+        vulnerable_code = vulnerable_code.replace("\\n", "\n").replace("\\t", "\t")
+        init_code = init_code.replace("\\n", "\n").replace("\\t", "\t")
+
+        # Insert vulnerable code into template
+        app_code = _insert_code_into_template(
+            template_code, vulnerable_code, init_code
+        )
 
         if not validate_code(app_code):
+            logger.warning("[GENERATOR] Generated code failed validation")
             return None
 
         # Verify the flag is in the code
@@ -522,6 +603,40 @@ The flag to embed in the app: {flag}
 
     except Exception:
         return None
+
+
+def _insert_code_into_template(template: str, vulnerable_code: str, init_code: str) -> str:
+    """Insert generated code into the template at the right locations."""
+    # Insert vulnerable code before the "RUN APP" section
+    marker = "# ============================================================================\n# RUN APP"
+    if marker in template:
+        template = template.replace(
+            marker,
+            f"{vulnerable_code}\n\n\n{marker}"
+        )
+    else:
+        # Fallback: insert before if __name__
+        template = template.replace(
+            "if __name__ == '__main__':",
+            f"{vulnerable_code}\n\n\nif __name__ == '__main__':"
+        )
+
+    # Insert init code if provided
+    if init_code and init_code.strip():
+        # Look for init_db or setup function
+        if "def init_db():" in template:
+            # Insert after the init_db function definition
+            template = template.replace(
+                "def init_db():\n",
+                f"def init_db():\n{init_code}\n"
+            )
+        elif "def setup():" in template:
+            template = template.replace(
+                "def setup():\n",
+                f"def setup():\n{init_code}\n"
+            )
+
+    return template
 
 
 def fix_ctf_for_spec(

@@ -9,17 +9,17 @@ from fastapi.responses import HTMLResponse
 import json
 
 from app.auth.router import get_current_user
+from app.ctf.aider_fixer import fix_crash_with_aider, fix_validation_with_aider
 from app.ctf.docker_mgr import DockerManager
 from app.ctf.generator import (
     CTFChallenge,
     ExploitSpec,
-    fix_code,
-    fix_ctf_for_spec,
     generate_ctf_from_spec,
     generate_exploit_spec,
     generate_flag,
 )
 from app.ctf.validator import validate_with_spec
+from app.dashboard.router import get_user_api_key
 from app.db import get_connection
 
 logger = logging.getLogger(__name__)
@@ -47,13 +47,14 @@ def get_docker_manager() -> DockerManager | None:
 def deploy_challenge(
     challenge: CTFChallenge, challenge_id: int, user_id: int, max_fix_attempts: int = 2
 ) -> tuple[str | None, str]:
-    """Build and run container with auto-fix on failure. Returns (url, error_message)."""
+    """Build and run container with agentic auto-fix on failure. Returns (url, error_message)."""
     mgr = get_docker_manager()
     if not mgr:
         return None, "Docker not available"
 
     app_code = challenge.app_code
     requirements = challenge.requirements
+    spec = challenge.exploit_spec
 
     for attempt in range(max_fix_attempts + 1):
         image_id = mgr.build_image(app_code, requirements)
@@ -72,18 +73,27 @@ def deploy_challenge(
                 )
             return result.info.url, ""
 
-        # Container failed - try to fix the code
-        if result.logs and attempt < max_fix_attempts:
-            logger.info(f"Container crashed, attempting fix (attempt {attempt + 1})")
-            fixed_code = fix_code(app_code, result.logs, user_id)
-            if fixed_code:
-                # Verify fixed code still contains the flag
-                if challenge.flag in fixed_code:
-                    app_code = fixed_code
+        # Container failed - try to fix the code using Aider
+        if result.logs and attempt < max_fix_attempts and spec:
+            logger.info(f"Container crashed, using Aider to fix (attempt {attempt + 1})")
+            api_key = get_user_api_key(user_id)
+            if api_key:
+                aider_result = fix_crash_with_aider(
+                    app_code=app_code,
+                    crash_logs=result.logs,
+                    spec=spec,
+                    flag=challenge.flag,
+                    api_key=api_key,
+                )
+                if aider_result.success and aider_result.code:
+                    logger.info(f"Aider fix succeeded: {aider_result.message}")
+                    app_code = aider_result.code
                     mgr.cleanup_image(image_id)
                     continue
                 else:
-                    logger.warning("Fixed code missing flag, skipping fix")
+                    logger.warning(f"Aider fix failed: {aider_result.message}")
+            else:
+                logger.warning("No API key available for Aider fix")
 
         # No fix possible or last attempt
         mgr.cleanup_image(image_id)
@@ -160,24 +170,37 @@ async def generate_ctf(
         if attempt == 0:
             challenge = generate_ctf_from_spec(spec, flag, user_id, prompt)
         elif challenge and validation_error:
-            # Fix the app based on validation error
-            fixed_code = fix_ctf_for_spec(
-                challenge.app_code, spec, flag, validation_error, user_id
-            )
-            if fixed_code:
-                challenge = CTFChallenge(
-                    name=challenge.name,
-                    app_code=fixed_code,
-                    requirements=challenge.requirements,
+            # Fix the app using Aider
+            logger.info(f"Using Aider to fix validation error: {validation_error}")
+            api_key = get_user_api_key(user_id)
+            if api_key:
+                aider_result = fix_validation_with_aider(
+                    app_code=challenge.app_code,
+                    validation_error=validation_error,
+                    spec=spec,
                     flag=flag,
-                    vuln_description=spec.exploit_description,
-                    exploit_hint=f"{spec.exploit_method} {spec.exploit_path}",
-                    difficulty=difficulty,
-                    vuln_types=[vuln_type],
-                    exploit_spec=spec,
+                    api_key=api_key,
                 )
+                if aider_result.success and aider_result.code:
+                    logger.info(f"Aider fix succeeded: {aider_result.message}")
+                    challenge = CTFChallenge(
+                        name=challenge.name,
+                        app_code=aider_result.code,
+                        requirements=challenge.requirements,
+                        flag=flag,
+                        vuln_description=spec.exploit_description,
+                        exploit_hint=f"{spec.exploit_method} {spec.exploit_path}",
+                        difficulty=difficulty,
+                        vuln_types=[vuln_type],
+                        exploit_spec=spec,
+                    )
+                else:
+                    # Aider fix failed, try generating fresh
+                    logger.warning(f"Aider fix failed: {aider_result.message}, regenerating")
+                    challenge = generate_ctf_from_spec(spec, flag, user_id, prompt)
             else:
-                # Fix failed, try generating fresh
+                # No API key, regenerate from scratch
+                logger.warning("No API key for Aider, regenerating from scratch")
                 challenge = generate_ctf_from_spec(spec, flag, user_id, prompt)
 
         if not challenge:

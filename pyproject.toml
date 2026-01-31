@@ -15,6 +15,7 @@ dependencies = [
     "docker>=7.1.0",
     "openai>=1.60.0",
     "httpx>=0.28.0",
+    "aider-chat>=0.70.0",
 ]
 
 [project.optional-dependencies]
