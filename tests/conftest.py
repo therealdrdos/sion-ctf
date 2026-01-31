@@ -1,5 +1,4 @@
 import os
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -16,20 +15,21 @@ def setup_test_db():
     yield
     # Cleanup
     import shutil
+
     if test_dir.exists():
         shutil.rmtree(test_dir)
 
 
 @pytest.fixture
 def client():
-    from app.main import app
-    from app.db import init_db, get_db_path
-    
     # Use test database
     import app.db as db_module
+    from app.db import init_db
+    from app.main import app
+
     db_module.DB_PATH = Path("test_data/test.db")
-    
+
     init_db()
-    
+
     with TestClient(app) as c:
         yield c
