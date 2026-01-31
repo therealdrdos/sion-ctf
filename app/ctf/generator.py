@@ -25,6 +25,10 @@ CRITICAL RULES:
 4. The flag format is FLAG{...} - use EXACTLY the flag provided in the prompt
 5. Keep code minimal, use render_template_string for HTML
 6. App MUST run with: app.run(host='0.0.0.0', port=5000)
+7. Use MODERN Flask (3.x) patterns only:
+   - Do NOT use @app.before_first_request (removed in Flask 2.3)
+   - Initialize data at module level or inside route functions
+   - For database setup, create tables directly after db connection, not in decorators
 
 EXAMPLES of proper flag placement:
 - SQL Injection: Store flag in a database table, vulnerable query can extract it
