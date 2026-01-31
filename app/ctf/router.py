@@ -8,7 +8,7 @@ from fastapi.responses import HTMLResponse
 
 from app.auth.router import get_current_user
 from app.ctf.docker_mgr import DockerManager
-from app.ctf.generator import CTFChallenge
+from app.ctf.generator import CTFChallenge, fix_code
 from app.ctf.generator import generate_ctf as gen_ctf
 from app.ctf.validator import validate_challenge
 from app.db import get_connection
@@ -35,29 +35,57 @@ def get_docker_manager() -> DockerManager | None:
     return _docker_mgr
 
 
-def deploy_challenge(challenge: CTFChallenge, challenge_id: int) -> tuple[str | None, str]:
-    """Build and run container. Returns (url, error_message)."""
+def deploy_challenge(
+    challenge: CTFChallenge, challenge_id: int, user_id: int, max_fix_attempts: int = 2
+) -> tuple[str | None, str]:
+    """Build and run container with auto-fix on failure. Returns (url, error_message)."""
     mgr = get_docker_manager()
     if not mgr:
         return None, "Docker not available"
 
-    image_id = mgr.build_image(challenge.app_code, challenge.requirements)
-    if not image_id:
-        return None, "Failed to build container image"
+    app_code = challenge.app_code
+    requirements = challenge.requirements
 
-    info = mgr.run_container(image_id, name_prefix=f"ctf-{challenge_id}")
-    if not info:
+    for attempt in range(max_fix_attempts + 1):
+        image_id = mgr.build_image(app_code, requirements)
+        if not image_id:
+            return None, "Failed to build container image"
+
+        result = mgr.run_container(image_id, name_prefix=f"ctf-{challenge_id}")
+
+        if result.success and result.info:
+            # Update database with container info
+            with get_connection() as conn:
+                conn.execute(
+                    "UPDATE challenges SET container_id = ?, container_url = ?, "
+                    "app_code = ?, status = ? WHERE id = ?",
+                    (result.info.container_id, result.info.url, app_code, "running", challenge_id),
+                )
+            return result.info.url, ""
+
+        # Container failed - try to fix the code
+        if result.logs and attempt < max_fix_attempts:
+            logger.info(f"Container crashed, attempting fix (attempt {attempt + 1})")
+            fixed_code = fix_code(app_code, result.logs, user_id)
+            if fixed_code:
+                # Verify fixed code still contains the flag
+                if challenge.flag in fixed_code:
+                    app_code = fixed_code
+                    mgr.cleanup_image(image_id)
+                    continue
+                else:
+                    logger.warning("Fixed code missing flag, skipping fix")
+
+        # No fix possible or last attempt
         mgr.cleanup_image(image_id)
-        return None, "Failed to start container"
+        error_msg = result.error or "Failed to start container"
+        if result.logs:
+            # Include first line of error in message
+            first_error = result.logs.strip().split("\n")[-1][:100]
+            error_msg = f"{error_msg}: {first_error}"
+        return None, error_msg
 
-    # Update database with container info
-    with get_connection() as conn:
-        conn.execute(
-            "UPDATE challenges SET container_id = ?, container_url = ?, status = ? WHERE id = ?",
-            (info.container_id, info.url, "running", challenge_id),
-        )
-
-    return info.url, ""
+    return None, "Failed to start container after fix attempts"
 
 
 @router.post("/generate", response_class=HTMLResponse)
@@ -124,8 +152,8 @@ async def generate_ctf(
         )
         challenge_id = cursor.lastrowid
 
-    # Step 3: Deploy
-    url, deploy_error = deploy_challenge(challenge, challenge_id)
+    # Step 3: Deploy (with auto-fix on crash)
+    url, deploy_error = deploy_challenge(challenge, challenge_id, user_id)
 
     if deploy_error:
         return msg_html + info_msg(

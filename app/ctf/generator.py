@@ -111,6 +111,83 @@ def validate_code(code: str) -> bool:
         return False
 
 
+FIX_CODE_PROMPT = """You are a Python code fixer. The Flask application below crashed with an error.
+Fix the code to resolve the error while keeping ALL functionality intact.
+
+RULES:
+1. Keep the SAME vulnerability and flag - do not change the security behavior
+2. Only fix the specific error mentioned
+3. Use modern Flask 3.x patterns (no @app.before_first_request, etc.)
+4. Return ONLY the fixed Python code, no explanations or markdown"""
+
+
+def fix_code(app_code: str, error_log: str, user_id: int) -> str | None:
+    """Ask AI to fix code based on error logs. Returns fixed code or None."""
+    api_key = get_user_api_key(user_id)
+    if not api_key:
+        return None
+
+    client = OpenAI(api_key=api_key)
+
+    prompt = f"""Original Flask application code:
+
+```python
+{app_code}
+```
+
+Error when running:
+```
+{error_log}
+```
+
+Fix the code to resolve this error. Return only the fixed Python code."""
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4.1-mini",
+            messages=[
+                {"role": "system", "content": FIX_CODE_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.3,
+            max_tokens=4000,
+        )
+
+        if response.usage:
+            save_api_usage(
+                user_id=user_id,
+                model=response.model,
+                prompt_tokens=response.usage.prompt_tokens,
+                completion_tokens=response.usage.completion_tokens,
+                total_tokens=response.usage.total_tokens,
+                operation="ctf_fix",
+            )
+
+        content = response.choices[0].message.content
+        if not content:
+            return None
+
+        # Clean up response - remove markdown if present
+        code = content.strip()
+        if code.startswith("```python"):
+            code = code[9:]
+        if code.startswith("```"):
+            code = code[3:]
+        if code.endswith("```"):
+            code = code[:-3]
+
+        code = code.strip()
+
+        # Validate the fixed code
+        if not validate_code(code):
+            return None
+
+        return code
+
+    except Exception:
+        return None
+
+
 def generate_ctf(
     prompt: str, difficulty: str, vuln_types: list[str], user_id: int, max_attempts: int = 3
 ) -> CTFChallenge | None:

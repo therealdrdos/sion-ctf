@@ -25,6 +25,17 @@ class ContainerInfo:
     url: str
 
 
+@dataclass
+class ContainerResult:
+    """Result of running a container - success or failure with details."""
+
+    success: bool
+    info: ContainerInfo | None = None
+    error: str | None = None
+    logs: str | None = None
+    container_id: str | None = None  # For cleanup even on failure
+
+
 def _get_docker_client():
     """Try multiple Docker socket locations (macOS Docker Desktop compatibility)."""
     import os
@@ -100,8 +111,9 @@ class DockerManager:
         name_prefix: str = "ctf",
         memory_limit: str = "512m",
         cpu_quota: int = 50000,
-    ) -> ContainerInfo | None:
-        """Run container and return connection info."""
+    ) -> ContainerResult:
+        """Run container and return result with success/failure details."""
+        container = None
         try:
             container = self.client.containers.run(
                 image_id,
@@ -118,28 +130,72 @@ class DockerManager:
                 container.reload()
                 if container.status == "running":
                     break
+                if container.status == "exited":
+                    # Container crashed - get logs
+                    logs = container.logs(tail=50).decode()
+                    container_id = container.id
+                    container.remove(force=True)
+                    return ContainerResult(
+                        success=False,
+                        error="Container crashed on startup",
+                        logs=logs,
+                        container_id=container_id,
+                    )
                 time.sleep(0.5)
 
             # Wait for Flask to start
             time.sleep(2)
 
-            # Get the published host port
+            # Check if still running after Flask startup time
             container.reload()
+            if container.status != "running":
+                logs = container.logs(tail=50).decode()
+                container_id = container.id
+                container.remove(force=True)
+                return ContainerResult(
+                    success=False,
+                    error="Container exited after startup",
+                    logs=logs,
+                    container_id=container_id,
+                )
+
+            # Get the published host port
             ports = container.attrs.get("NetworkSettings", {}).get("Ports", {})
             if "5000/tcp" in ports and ports["5000/tcp"]:
                 host_port = ports["5000/tcp"][0]["HostPort"]
-                return ContainerInfo(
+                info = ContainerInfo(
                     container_id=container.id,
                     image_id=image_id,
                     ip_address="127.0.0.1",
                     port=int(host_port),
                     url=f"http://127.0.0.1:{host_port}",
                 )
+                return ContainerResult(success=True, info=info, container_id=container.id)
 
-            return None
+            # No port binding - something went wrong
+            logs = container.logs(tail=50).decode()
+            return ContainerResult(
+                success=False,
+                error="Container started but port not bound",
+                logs=logs,
+                container_id=container.id,
+            )
 
-        except (ContainerError, ImageNotFound):
-            return None
+        except (ContainerError, ImageNotFound) as e:
+            return ContainerResult(success=False, error=str(e))
+        except Exception as e:
+            # Try to get logs if container exists
+            logs = None
+            container_id = None
+            if container:
+                try:
+                    logs = container.logs(tail=50).decode()
+                    container_id = container.id
+                except Exception:
+                    pass
+            return ContainerResult(
+                success=False, error=str(e), logs=logs, container_id=container_id
+            )
 
     def stop_container(self, container_id: str, timeout: int = 5):
         """Stop and remove a container."""
