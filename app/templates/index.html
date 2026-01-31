@@ -92,10 +92,26 @@
                class="inline-block mt-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded text-sm">
                 Open Challenge
             </a>
-            <a href="/tutorial" class="inline-block mt-2 ml-2 px-4 py-2 bg-gray-600 hover:bg-gray-700 rounded text-sm">
+            <a id="tutorial-link" href="#"
+               class="inline-block mt-2 ml-2 px-4 py-2 bg-gray-600 hover:bg-gray-700 rounded text-sm">
                 View Tutorial
             </a>
         </div>
+
+        <!-- Challenge History -->
+        {% if challenges %}
+        <div class="mt-6 pt-6 border-t border-gray-700">
+            <h3 class="text-lg font-bold mb-3">Recent Challenges</h3>
+            <div class="space-y-2">
+                {% for c in challenges %}
+                <div class="flex items-center justify-between p-2 bg-gray-700 rounded text-sm">
+                    <span>{{ c.vuln_type }} ({{ c.difficulty }})</span>
+                    <a href="/tutorial/{{ c.id }}" class="text-blue-400 hover:underline">Tutorial</a>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
     </div>
 </div>
 
@@ -118,10 +134,11 @@ function updateVulnTypes() {
     document.getElementById('vuln-types-input').value = checked.join(',');
 }
 
-function showChallenge(url, info) {
+function showChallenge(url, info, challengeId) {
     document.getElementById('active-challenge').classList.remove('hidden');
     document.getElementById('challenge-link').href = url;
     document.getElementById('challenge-info').textContent = info;
+    document.getElementById('tutorial-link').href = '/tutorial/' + challengeId;
 }
 </script>
 {% endblock %}

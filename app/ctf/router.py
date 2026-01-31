@@ -67,6 +67,12 @@ async def generate_ctf(
         <p class="text-sm mt-1">{challenge.vuln_description}</p>
         <p class="text-xs text-green-400 mt-2">Challenge ID: {challenge_id}</p>
         <p class="text-xs text-gray-400 mt-1">Hint: {challenge.exploit_hint}</p>
+        <div class="mt-3 flex gap-2">
+            <a href="/tutorial/{challenge_id}"
+               class="px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded text-sm">
+                View Tutorial
+            </a>
+        </div>
         <p class="text-sm text-yellow-400 mt-2">Container deployment coming next...</p>
     </div>
     """

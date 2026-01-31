@@ -45,7 +45,20 @@ app.include_router(tutorial_router)
 
 @app.get("/")
 async def index(request: Request):
+    from app.db import get_connection
+
     user = get_current_user(request)
     if not user:
         return RedirectResponse("/auth/login")
-    return templates.TemplateResponse(request, "index.html", {"user": user})
+
+    with get_connection() as conn:
+        challenges = conn.execute(
+            "SELECT * FROM challenges WHERE user_id = ? ORDER BY created_at DESC LIMIT 5",
+            (user["id"],),
+        ).fetchall()
+
+    return templates.TemplateResponse(
+        request,
+        "index.html",
+        {"user": user, "challenges": [dict(c) for c in challenges]},
+    )
