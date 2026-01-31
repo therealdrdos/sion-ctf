@@ -11,41 +11,56 @@
 <div class="max-w-4xl">
     <h1 class="text-3xl font-bold mb-6">Challenge Tutorial</h1>
 
-    {% if challenge %}
+    {% if challenge and tutorial %}
     <div class="bg-gray-800 rounded-lg p-6 mb-6">
-        <h2 class="text-xl font-bold mb-2">{{ challenge.vuln_type|upper }} Challenge</h2>
+        <h2 class="text-xl font-bold mb-2">{{ tutorial.vuln_name }}</h2>
         <p class="text-gray-400">Difficulty: {{ challenge.difficulty }}</p>
+        <p class="text-gray-300 mt-2">{{ tutorial.vuln_description }}</p>
     </div>
 
     <!-- Hints Section -->
-    <div class="space-y-4">
+    <h3 class="text-lg font-bold mb-4">Hints</h3>
+    <div class="space-y-4 mb-8">
+        {% for hint in tutorial.hints %}
         <details class="bg-gray-800 rounded-lg">
             <summary class="p-4 cursor-pointer hover:bg-gray-700 rounded-lg">
-                Hint 1: Getting Started
+                Hint {{ loop.index }}
             </summary>
             <div class="p-4 pt-0 text-gray-300">
-                Tutorial hints will be generated here...
+                {{ hint }}
             </div>
         </details>
-
-        <details class="bg-gray-800 rounded-lg">
-            <summary class="p-4 cursor-pointer hover:bg-gray-700 rounded-lg">
-                Hint 2: Identifying the Vulnerability
-            </summary>
-            <div class="p-4 pt-0 text-gray-300">
-                More detailed hints...
-            </div>
-        </details>
-
-        <details class="bg-gray-800 rounded-lg">
-            <summary class="p-4 cursor-pointer hover:bg-gray-700 rounded-lg text-red-400">
-                Full Solution (Spoiler)
-            </summary>
-            <div class="p-4 pt-0 text-gray-300">
-                Complete solution will appear here...
-            </div>
-        </details>
+        {% endfor %}
     </div>
+
+    <!-- Walkthrough -->
+    <details class="bg-gray-800 rounded-lg mb-4">
+        <summary class="p-4 cursor-pointer hover:bg-gray-700 rounded-lg text-yellow-400">
+            Step-by-Step Walkthrough
+        </summary>
+        <div class="p-4 pt-0 text-gray-300 whitespace-pre-wrap">{{ tutorial.walkthrough }}</div>
+    </details>
+
+    <!-- Solution -->
+    <details class="bg-gray-800 rounded-lg mb-8">
+        <summary class="p-4 cursor-pointer hover:bg-gray-700 rounded-lg text-red-400">
+            Full Solution (Spoiler)
+        </summary>
+        <div class="p-4 pt-0 text-gray-300">
+            <pre class="bg-gray-900 p-4 rounded overflow-x-auto">{{ tutorial.solution }}</pre>
+        </div>
+    </details>
+
+    <!-- Resources -->
+    <h3 class="text-lg font-bold mb-4">Learn More</h3>
+    <ul class="space-y-2">
+        {% for url in tutorial.resources %}
+        <li>
+            <a href="{{ url }}" target="_blank" class="text-blue-400 hover:underline">{{ url }}</a>
+        </li>
+        {% endfor %}
+    </ul>
+
     {% else %}
     <p class="text-gray-400">No active challenge. Generate one from the dashboard first.</p>
     {% endif %}

@@ -36,9 +36,11 @@ async def health():
 from app.auth.router import get_current_user  # noqa: E402
 from app.auth.router import router as auth_router  # noqa: E402
 from app.ctf.router import router as ctf_router  # noqa: E402
+from app.tutorial.router import router as tutorial_router  # noqa: E402
 
 app.include_router(auth_router)
 app.include_router(ctf_router)
+app.include_router(tutorial_router)
 
 
 @app.get("/")
@@ -47,12 +49,3 @@ async def index(request: Request):
     if not user:
         return RedirectResponse("/auth/login")
     return templates.TemplateResponse(request, "index.html", {"user": user})
-
-
-@app.get("/tutorial")
-async def tutorial(request: Request):
-    user = get_current_user(request)
-    if not user:
-        return RedirectResponse("/auth/login")
-    # TODO: Get active challenge for user
-    return templates.TemplateResponse(request, "tutorial.html", {"challenge": None})
