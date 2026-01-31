@@ -54,10 +54,12 @@ async def health():
 from app.auth.router import get_current_user  # noqa: E402
 from app.auth.router import router as auth_router  # noqa: E402
 from app.ctf.router import router as ctf_router  # noqa: E402
+from app.dashboard.router import router as dashboard_router  # noqa: E402
 from app.tutorial.router import router as tutorial_router  # noqa: E402
 
 app.include_router(auth_router)
 app.include_router(ctf_router)
+app.include_router(dashboard_router)
 app.include_router(tutorial_router)
 
 

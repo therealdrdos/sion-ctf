@@ -1,8 +1,9 @@
+import json
 from dataclasses import dataclass
 
 from openai import OpenAI
 
-from app.config import settings
+from app.dashboard.router import get_user_api_key, save_api_usage
 
 VULN_INFO = {
     "sqli": {
@@ -95,25 +96,27 @@ def generate_tutorial(
     vuln_type: str,
     difficulty: str,
     description: str,
+    user_id: int,
     exploit_hint: str = "",
 ) -> Tutorial | None:
     vuln_info = VULN_INFO.get(vuln_type, VULN_INFO.get("sqli"))
 
-    if not settings.openai_api_key:
+    api_key = get_user_api_key(user_id)
+    if not api_key:
         return Tutorial(
             hints=[
                 "Look at user inputs in the application.",
                 f"This challenge involves {vuln_info['name']}.",
                 exploit_hint or "Try manipulating the input parameters.",
             ],
-            walkthrough="Tutorial generation requires API key.",
-            solution="Solution generation requires API key.",
+            walkthrough="Tutorial generation requires API key. Set your key in the Dashboard.",
+            solution="Solution generation requires API key. Set your key in the Dashboard.",
             vuln_name=vuln_info["name"],
             vuln_description=vuln_info["description"],
             resources=vuln_info["resources"],
         )
 
-    client = OpenAI(api_key=settings.openai_api_key)
+    client = OpenAI(api_key=api_key)
 
     prompt = TUTORIAL_PROMPT.format(
         vuln_type=vuln_info["name"],
@@ -130,12 +133,20 @@ def generate_tutorial(
             max_tokens=2000,
         )
 
+        # Track API usage
+        if response.usage:
+            save_api_usage(
+                user_id=user_id,
+                model=response.model,
+                prompt_tokens=response.usage.prompt_tokens,
+                completion_tokens=response.usage.completion_tokens,
+                total_tokens=response.usage.total_tokens,
+                operation="tutorial_generate",
+            )
+
         content = response.choices[0].message.content
         if not content:
             return None
-
-        # Parse JSON response
-        import json
 
         if "```json" in content:
             content = content.split("```json")[1].split("```")[0]

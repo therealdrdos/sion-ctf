@@ -34,6 +34,7 @@ async def view_tutorial(request: Request, challenge_id: int):
         vuln_type=vuln_type,
         difficulty=challenge["difficulty"],
         description=challenge["description"] or "",
+        user_id=user["id"],
     )
 
     return templates.TemplateResponse(

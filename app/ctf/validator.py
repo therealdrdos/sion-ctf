@@ -7,7 +7,7 @@ from pathlib import Path
 import httpx
 from openai import OpenAI
 
-from app.config import settings
+from app.dashboard.router import get_user_api_key, save_api_usage
 
 SOLUTION_PROMPT = """You are a CTF solver. Given a vulnerable Flask application, generate a \
 Python script that exploits the vulnerability to retrieve the flag.
@@ -35,11 +35,12 @@ class ValidationResult:
     error: str | None
 
 
-def generate_solution(app_code: str, vuln_types: list[str]) -> Solution | None:
-    if not settings.openai_api_key:
+def generate_solution(app_code: str, vuln_types: list[str], user_id: int) -> Solution | None:
+    api_key = get_user_api_key(user_id)
+    if not api_key:
         return None
 
-    client = OpenAI(api_key=settings.openai_api_key)
+    client = OpenAI(api_key=api_key)
 
     prompt = f"""Vulnerable Flask application code:
 
@@ -60,6 +61,17 @@ Generate an exploit script to retrieve the flag."""
         temperature=0.3,
         max_tokens=2000,
     )
+
+    # Track API usage
+    if response.usage:
+        save_api_usage(
+            user_id=user_id,
+            model=response.model,
+            prompt_tokens=response.usage.prompt_tokens,
+            completion_tokens=response.usage.completion_tokens,
+            total_tokens=response.usage.total_tokens,
+            operation="validation",
+        )
 
     content = response.choices[0].message.content
     if not content:
@@ -125,6 +137,7 @@ def validate_challenge(
     expected_flag: str,
     target_url: str,
     vuln_types: list[str],
+    user_id: int,
     max_retries: int = 3,
 ) -> tuple[bool, Solution | None, str]:
     """
@@ -135,7 +148,7 @@ def validate_challenge(
         return False, None, "Container not responding"
 
     for attempt in range(max_retries):
-        solution = generate_solution(app_code, vuln_types)
+        solution = generate_solution(app_code, vuln_types, user_id)
         if not solution:
             continue
 

@@ -97,10 +97,13 @@ async def generate_ctf(
     </div>
     """
 
-    challenge = gen_ctf(prompt, difficulty, vuln_list)
+    challenge = gen_ctf(prompt, difficulty, vuln_list, user_id)
 
     if not challenge:
-        return msg_html + error_msg("Failed to generate CTF. Check API key or try again.")
+        return msg_html + error_msg(
+            'Failed to generate CTF. <a href="/dashboard" class="underline">Set your API key</a> '
+            "in the Dashboard or try again."
+        )
 
     # Step 2: Save to database
     with get_connection() as conn:
@@ -140,7 +143,8 @@ async def generate_ctf(
             challenge.flag,
             url,
             vuln_list,
-            max_retries=3,
+            user_id=user_id,
+            max_retries=1,
         )
         if valid:
             validated = True

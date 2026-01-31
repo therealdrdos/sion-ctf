@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 from openai import OpenAI
 
-from app.config import settings
+from app.dashboard.router import get_user_api_key, save_api_usage
 
 VULN_DESCRIPTIONS = {
     "sqli": "SQL Injection - User input is concatenated into SQL queries without sanitization",
@@ -106,12 +106,13 @@ def validate_code(code: str) -> bool:
 
 
 def generate_ctf(
-    prompt: str, difficulty: str, vuln_types: list[str], max_attempts: int = 3
+    prompt: str, difficulty: str, vuln_types: list[str], user_id: int, max_attempts: int = 3
 ) -> CTFChallenge | None:
-    if not settings.openai_api_key:
+    api_key = get_user_api_key(user_id)
+    if not api_key:
         return None
 
-    client = OpenAI(api_key=settings.openai_api_key)
+    client = OpenAI(api_key=api_key)
 
     for _ in range(max_attempts):
         try:
@@ -129,6 +130,21 @@ def generate_ctf(
                 temperature=0.7,
                 max_tokens=4000,
             )
+
+            # Track API usage
+            if response.usage:
+                save_api_usage(
+                    user_id=user_id,
+                    model=response.model,
+                    prompt_tokens=response.usage.prompt_tokens,
+                    completion_tokens=response.usage.completion_tokens,
+                    total_tokens=response.usage.total_tokens,
+                    operation="ctf_generate",
+                )
+
+            content = response.choices[0].message.content
+            if not content:
+                continue
 
             content = response.choices[0].message.content
             if not content:

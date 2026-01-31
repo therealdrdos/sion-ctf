@@ -1,0 +1,170 @@
+{% extends "base.html" %}
+{% block title %}Dashboard - SION-CTF{% endblock %}
+
+{% block nav_right %}
+<div class="flex items-center gap-4">
+    <a href="/" class="text-gray-400 hover:text-white">Generator</a>
+    <span class="text-green-400">{{ user.username }}</span>
+    <form method="post" action="/auth/logout">
+        <button type="submit" class="text-sm text-gray-400 hover:text-white">Logout</button>
+    </form>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="max-w-4xl mx-auto">
+    <h1 class="text-2xl font-bold mb-6">Dashboard</h1>
+
+    <!-- Flash Messages -->
+    {% if request.query_params.get('success') == 'key_saved' %}
+    <div class="mb-4 p-3 bg-green-900 rounded text-green-200">
+        API key saved successfully.
+    </div>
+    {% elif request.query_params.get('success') == 'key_deleted' %}
+    <div class="mb-4 p-3 bg-yellow-900 rounded text-yellow-200">
+        API key removed.
+    </div>
+    {% elif request.query_params.get('error') == 'empty_key' %}
+    <div class="mb-4 p-3 bg-red-900 rounded text-red-200">
+        Please enter a valid API key.
+    </div>
+    {% endif %}
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <!-- API Key Section -->
+        <div class="bg-gray-800 rounded-lg p-6">
+            <h2 class="text-xl font-bold mb-4">OpenAI API Key</h2>
+            
+            {% if api_key_set %}
+            <div class="mb-4">
+                <p class="text-sm text-gray-400 mb-2">Current key:</p>
+                <code class="text-green-400 bg-gray-900 px-3 py-2 rounded block">{{ api_key_masked }}</code>
+            </div>
+            {% else %}
+            <div class="mb-4 p-3 bg-yellow-900/50 rounded">
+                <p class="text-sm text-yellow-200">
+                    No API key set. You need to add your OpenAI API key to generate CTF challenges.
+                </p>
+            </div>
+            {% endif %}
+
+            <form method="post" action="/dashboard/api-key" class="space-y-4">
+                <div>
+                    <label class="block text-sm text-gray-400 mb-2">
+                        {{ 'Update' if api_key_set else 'Set' }} API Key
+                    </label>
+                    <input type="password" name="api_key" 
+                           placeholder="sk-..."
+                           class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded focus:border-green-500 focus:outline-none"
+                           required>
+                </div>
+                <div class="flex gap-2">
+                    <button type="submit" 
+                            class="px-4 py-2 bg-green-600 hover:bg-green-700 rounded font-medium">
+                        {{ 'Update Key' if api_key_set else 'Save Key' }}
+                    </button>
+                    {% if api_key_set %}
+                    <button type="button" 
+                            hx-delete="/dashboard/api-key"
+                            hx-confirm="Remove your API key?"
+                            class="px-4 py-2 bg-red-700 hover:bg-red-600 rounded">
+                        Remove
+                    </button>
+                    {% endif %}
+                </div>
+            </form>
+
+            <p class="mt-4 text-xs text-gray-500">
+                Your API key is encrypted before storage. Get your key from 
+                <a href="https://platform.openai.com/api-keys" target="_blank" class="text-blue-400 hover:underline">
+                    OpenAI Dashboard
+                </a>
+            </p>
+        </div>
+
+        <!-- Usage Summary -->
+        <div class="bg-gray-800 rounded-lg p-6">
+            <h2 class="text-xl font-bold mb-4">Usage Summary</h2>
+            
+            {% if usage.total.call_count > 0 %}
+            <div class="grid grid-cols-2 gap-4 mb-6">
+                <div class="bg-gray-700 rounded p-4">
+                    <p class="text-2xl font-bold text-green-400">{{ "{:,}".format(usage.total.total_tokens) }}</p>
+                    <p class="text-sm text-gray-400">Total Tokens</p>
+                </div>
+                <div class="bg-gray-700 rounded p-4">
+                    <p class="text-2xl font-bold text-blue-400">{{ usage.total.call_count }}</p>
+                    <p class="text-sm text-gray-400">API Calls</p>
+                </div>
+            </div>
+
+            <!-- By Operation -->
+            {% if usage.by_operation %}
+            <h3 class="text-sm font-bold text-gray-400 mb-2">By Operation</h3>
+            <div class="space-y-2 mb-4">
+                {% for op in usage.by_operation %}
+                <div class="flex justify-between items-center text-sm">
+                    <span class="text-gray-300">
+                        {% if op.operation == 'ctf_generate' %}
+                        CTF Generation
+                        {% elif op.operation == 'tutorial_generate' %}
+                        Tutorial Generation
+                        {% else %}
+                        {{ op.operation }}
+                        {% endif %}
+                    </span>
+                    <span class="text-gray-400">
+                        {{ "{:,}".format(op.tokens) }} tokens ({{ op.calls }} calls)
+                    </span>
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
+            {% else %}
+            <p class="text-gray-500">No API usage recorded yet.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Recent API Calls -->
+    {% if usage.recent %}
+    <div class="mt-6 bg-gray-800 rounded-lg p-6">
+        <h2 class="text-xl font-bold mb-4">Recent API Calls</h2>
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+                <thead>
+                    <tr class="text-left text-gray-400 border-b border-gray-700">
+                        <th class="pb-2">Time</th>
+                        <th class="pb-2">Operation</th>
+                        <th class="pb-2">Model</th>
+                        <th class="pb-2 text-right">Prompt</th>
+                        <th class="pb-2 text-right">Completion</th>
+                        <th class="pb-2 text-right">Total</th>
+                    </tr>
+                </thead>
+                <tbody class="text-gray-300">
+                    {% for call in usage.recent %}
+                    <tr class="border-b border-gray-700/50">
+                        <td class="py-2 text-gray-400">{{ call.created_at[:16] }}</td>
+                        <td class="py-2">
+                            {% if call.operation == 'ctf_generate' %}
+                            <span class="text-green-400">CTF</span>
+                            {% elif call.operation == 'tutorial_generate' %}
+                            <span class="text-blue-400">Tutorial</span>
+                            {% else %}
+                            {{ call.operation }}
+                            {% endif %}
+                        </td>
+                        <td class="py-2 text-gray-400">{{ call.model }}</td>
+                        <td class="py-2 text-right">{{ "{:,}".format(call.prompt_tokens) }}</td>
+                        <td class="py-2 text-right">{{ "{:,}".format(call.completion_tokens) }}</td>
+                        <td class="py-2 text-right font-medium">{{ "{:,}".format(call.total_tokens) }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
