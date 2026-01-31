@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -7,6 +8,12 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from app.db import init_db
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).parent
 templates_dir = BASE_DIR / "templates"
@@ -20,7 +27,18 @@ templates = Jinja2Templates(directory=str(templates_dir))
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    logger.info("SION-CTF started")
     yield
+    # Cleanup on shutdown
+    try:
+        from app.ctf.router import get_docker_manager
+
+        mgr = get_docker_manager()
+        if mgr:
+            logger.info("Cleaning up CTF containers...")
+            mgr.cleanup_all_ctf_containers()
+    except Exception as e:
+        logger.warning(f"Cleanup error: {e}")
 
 
 app = FastAPI(title="SION-CTF", version="0.1.0", lifespan=lifespan)

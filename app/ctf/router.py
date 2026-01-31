@@ -1,4 +1,7 @@
+import html
 import logging
+import time
+from collections import defaultdict
 
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse
@@ -12,6 +15,10 @@ from app.db import get_connection
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/ctf", tags=["ctf"])
+
+# Simple in-memory rate limiting
+_rate_limit: dict[int, float] = defaultdict(float)
+RATE_LIMIT_SECONDS = 30
 
 # Global docker manager instance
 _docker_mgr: DockerManager | None = None
@@ -65,10 +72,22 @@ async def generate_ctf(
     if not user:
         return '<div class="p-3 bg-red-900 rounded text-red-200">Not authenticated</div>'
 
-    vuln_list = vuln_types.split(",") if vuln_types else ["sqli"]
+    # Rate limiting
+    user_id = user["id"]
+    now = time.time()
+    if now - _rate_limit[user_id] < RATE_LIMIT_SECONDS:
+        wait = int(RATE_LIMIT_SECONDS - (now - _rate_limit[user_id]))
+        return error_msg(f"Please wait {wait}s before generating another challenge.")
+    _rate_limit[user_id] = now
+
+    # Sanitize inputs
+    prompt = html.escape(prompt[:500])  # Limit length and escape HTML
+    difficulty = difficulty if difficulty in ("easy", "medium", "hard") else "easy"
+    valid_vulns = {"sqli", "xss", "cmdi", "path", "idor", "auth"}
+    vuln_list = [v for v in vuln_types.split(",") if v in valid_vulns] or ["sqli"]
 
     # Step 1: Generate
-    html = f"""
+    msg_html = f"""
     <div class="p-3 bg-gray-700 rounded">
         <p class="text-sm text-green-400 font-medium">Generating CTF...</p>
         <p class="text-sm text-gray-300 mt-1">{prompt}</p>
@@ -81,7 +100,7 @@ async def generate_ctf(
     challenge = gen_ctf(prompt, difficulty, vuln_list)
 
     if not challenge:
-        return html + error_msg("Failed to generate CTF. Check API key or try again.")
+        return msg_html + error_msg("Failed to generate CTF. Check API key or try again.")
 
     # Step 2: Save to database
     with get_connection() as conn:
@@ -105,7 +124,7 @@ async def generate_ctf(
     url, deploy_error = deploy_challenge(challenge, challenge_id)
 
     if deploy_error:
-        return html + info_msg(
+        return msg_html + info_msg(
             f"CTF generated (ID: {challenge_id})",
             challenge.vuln_description,
             f"Deployment: {deploy_error}. Tutorial still available.",
@@ -130,7 +149,7 @@ async def generate_ctf(
     except Exception:
         pass  # Validation is optional
 
-    return html + success_msg(
+    return msg_html + success_msg(
         "CTF Ready!",
         challenge.vuln_description,
         url,
