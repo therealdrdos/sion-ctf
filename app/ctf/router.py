@@ -132,30 +132,42 @@ async def generate_ctf(
             challenge_id,
         )
 
-    # Step 4: Validate (optional, skip if it fails)
+    # Step 4: Validate that the flag is actually extractable
+    validated = False
     try:
-        valid, _, _ = validate_challenge(
+        valid, solution, err = validate_challenge(
             challenge.app_code,
             challenge.flag,
             url,
             vuln_list,
-            max_retries=1,
+            max_retries=3,
         )
         if valid:
+            validated = True
             with get_connection() as conn:
                 conn.execute(
                     "UPDATE challenges SET status = ? WHERE id = ?",
                     ("validated", challenge_id),
                 )
-    except Exception:
-        pass  # Validation is optional
+    except Exception as e:
+        logger.warning(f"Validation error: {e}")
 
-    return msg_html + success_msg(
-        "CTF Ready!",
+    if validated:
+        return msg_html + success_msg(
+            "CTF Ready!",
+            challenge.vuln_description,
+            url,
+            challenge_id,
+            challenge.exploit_hint,
+        )
+
+    # Validation failed - warn user but still allow playing
+    return msg_html + warn_msg(
+        "CTF Deployed (unverified)",
         challenge.vuln_description,
         url,
         challenge_id,
-        challenge.exploit_hint,
+        "Flag extraction could not be verified. Challenge may be harder than intended.",
     )
 
 
@@ -272,11 +284,46 @@ def info_msg(title: str, desc: str, note: str, challenge_id: int) -> str:
         <p class="font-medium">{title}</p>
         <p class="text-sm mt-1">{desc}</p>
         <p class="text-sm text-yellow-400 mt-2">{note}</p>
-        <a href="/tutorial/{challenge_id}"
+        <a href="/tutorial/{challenge_id}" target="_blank"
            class="inline-block mt-2 px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded text-sm">
             View Tutorial
         </a>
     </div>
+    """
+
+
+def warn_msg(title: str, desc: str, url: str, challenge_id: int, warning: str) -> str:
+    return f"""
+    <div class="p-3 bg-yellow-900 rounded text-yellow-200 mt-2">
+        <p class="font-medium">{title}</p>
+        <p class="text-sm mt-1">{desc}</p>
+        <p class="text-xs text-yellow-400 mt-2">{warning}</p>
+        <div class="mt-3 flex gap-2 flex-wrap">
+            <a href="{url}" target="_blank"
+               class="px-3 py-1 bg-blue-600 hover:bg-blue-700 rounded text-sm">
+                Open Challenge
+            </a>
+            <a href="/tutorial/{challenge_id}" target="_blank"
+               class="px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded text-sm">
+                View Tutorial
+            </a>
+            <button hx-post="/ctf/stop/{challenge_id}" hx-swap="outerHTML"
+                    class="px-3 py-1 bg-red-700 hover:bg-red-600 rounded text-sm">
+                Stop
+            </button>
+        </div>
+        <form hx-post="/ctf/check/{challenge_id}" hx-target="#flag-result-{challenge_id}" hx-swap="innerHTML" class="mt-3">
+            <div class="flex gap-2">
+                <input type="text" name="flag" placeholder="FLAG{{...}}"
+                       class="flex-1 px-3 py-1 bg-gray-800 border border-gray-600 rounded text-sm focus:border-green-500 focus:outline-none">
+                <button type="submit" class="px-3 py-1 bg-green-700 hover:bg-green-600 rounded text-sm">Check</button>
+            </div>
+            <div id="flag-result-{challenge_id}"></div>
+        </form>
+    </div>
+    <script>
+        showChallenge("{url}", "{desc}", {challenge_id});
+    </script>
     """
 
 
@@ -291,7 +338,7 @@ def success_msg(title: str, desc: str, url: str, challenge_id: int, hint: str) -
                class="px-3 py-1 bg-blue-600 hover:bg-blue-700 rounded text-sm">
                 Open Challenge
             </a>
-            <a href="/tutorial/{challenge_id}"
+            <a href="/tutorial/{challenge_id}" target="_blank"
                class="px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded text-sm">
                 View Tutorial
             </a>

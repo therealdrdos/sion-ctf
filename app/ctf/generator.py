@@ -18,23 +18,28 @@ VULN_DESCRIPTIONS = {
 
 SYSTEM_PROMPT = """You are a CTF challenge generator. Generate a vulnerable Flask web application.
 
-IMPORTANT RULES:
+CRITICAL RULES:
 1. Generate a SINGLE Python file with Flask app containing the vulnerability
-2. The app must have a clear attack vector that can be exploited
-3. Include a flag in format FLAG{...} that can only be retrieved by exploiting the vulnerability
-4. The flag must be hidden and only accessible through successful exploitation
-5. Keep the code minimal and focused on the vulnerability
-6. Include basic HTML templates inline using render_template_string
-7. The app MUST run with: app.run(host='0.0.0.0', port=5000)
+2. The flag MUST be stored as a variable or in a file/database that is returned when the exploit succeeds
+3. The exploit must OUTPUT the flag - e.g. SQL injection returns the flag from a table, command injection cats a flag file, path traversal reads flag.txt, etc.
+4. The flag format is FLAG{...} - use EXACTLY the flag provided in the prompt
+5. Keep code minimal, use render_template_string for HTML
+6. App MUST run with: app.run(host='0.0.0.0', port=5000)
 
-OUTPUT FORMAT - Return valid JSON with these exact keys:
+EXAMPLES of proper flag placement:
+- SQL Injection: Store flag in a database table, vulnerable query can extract it
+- Command Injection: Write flag to /tmp/flag.txt, vulnerable endpoint can cat it
+- Path Traversal: Put flag in a file outside webroot that can be accessed via ../
+- XSS: Store flag in a cookie or hidden admin page
+
+OUTPUT FORMAT - Return valid JSON:
 {
     "name": "Short creative challenge name (2-4 words)",
-    "app_code": "# Full Python Flask application code here",
-    "requirements": "flask\\nwerkzeug",
-    "flag": "FLAG{the_actual_flag}",
-    "vuln_description": "Brief description of where the vulnerability is",
-    "exploit_hint": "Hint about how to exploit it"
+    "app_code": "# Python Flask code - MUST contain the exact flag provided",
+    "requirements": "flask",
+    "flag": "FLAG{exact_flag_from_prompt}",
+    "vuln_description": "Where the vulnerability is and how to trigger it",
+    "exploit_hint": "What technique to use"
 }"""
 
 
@@ -100,49 +105,60 @@ def validate_code(code: str) -> bool:
         return False
 
 
-def generate_ctf(prompt: str, difficulty: str, vuln_types: list[str]) -> CTFChallenge | None:
+def generate_ctf(
+    prompt: str, difficulty: str, vuln_types: list[str], max_attempts: int = 3
+) -> CTFChallenge | None:
     if not settings.openai_api_key:
         return None
 
-    try:
-        client = OpenAI(api_key=settings.openai_api_key)
-        user_prompt = build_prompt(prompt, difficulty, vuln_types)
+    client = OpenAI(api_key=settings.openai_api_key)
 
-        response = client.chat.completions.create(
-            model="gpt-4.1-mini",
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt},
-            ],
-            response_format={"type": "json_object"},
-            temperature=0.7,
-            max_tokens=4000,
-        )
-    except Exception:
-        return None
+    for _ in range(max_attempts):
+        try:
+            user_prompt = build_prompt(prompt, difficulty, vuln_types)
+            # Extract the flag we asked for from the prompt
+            expected_flag = user_prompt.split("The flag to hide in the application: ")[1].split("\n")[0]
 
-    content = response.choices[0].message.content
-    if not content:
-        return None
+            response = client.chat.completions.create(
+                model="gpt-4.1-mini",
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": user_prompt},
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.7,
+                max_tokens=4000,
+            )
 
-    data = parse_response(content)
-    if not data:
-        return None
+            content = response.choices[0].message.content
+            if not content:
+                continue
 
-    app_code = data.get("app_code", "")
-    # Fix escaped newlines - model sometimes outputs \\n instead of \n
-    app_code = app_code.replace("\\n", "\n").replace("\\t", "\t")
+            data = parse_response(content)
+            if not data:
+                continue
 
-    if not validate_code(app_code):
-        return None
+            app_code = data.get("app_code", "")
+            app_code = app_code.replace("\\n", "\n").replace("\\t", "\t")
 
-    return CTFChallenge(
-        name=data.get("name", "Unnamed Challenge"),
-        app_code=app_code,
-        requirements=data.get("requirements", "flask"),
-        flag=data.get("flag", ""),
-        vuln_description=data.get("vuln_description", ""),
-        exploit_hint=data.get("exploit_hint", ""),
-        difficulty=difficulty,
-        vuln_types=vuln_types,
-    )
+            if not validate_code(app_code):
+                continue
+
+            # Verify the flag is actually in the code
+            if expected_flag not in app_code:
+                continue
+
+            return CTFChallenge(
+                name=data.get("name", "Unnamed Challenge"),
+                app_code=app_code,
+                requirements=data.get("requirements", "flask"),
+                flag=expected_flag,
+                vuln_description=data.get("vuln_description", ""),
+                exploit_hint=data.get("exploit_hint", ""),
+                difficulty=difficulty,
+                vuln_types=vuln_types,
+            )
+        except Exception:
+            continue
+
+    return None

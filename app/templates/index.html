@@ -134,7 +134,7 @@
                     <div class="flex items-center justify-between">
                         <span class="font-medium">{{ c.name or c.vuln_type }}</span>
                         <div class="flex gap-2">
-                            <a href="/tutorial/{{ c.id }}" class="text-blue-400 hover:underline">Tutorial</a>
+                            <a href="/tutorial/{{ c.id }}" target="_blank" class="text-blue-400 hover:underline">Tutorial</a>
                             <button hx-delete="/ctf/challenge/{{ c.id }}"
                                     hx-target="#challenge-{{ c.id }}" hx-swap="outerHTML"
                                     class="text-red-400 hover:text-red-300">&times;</button>
@@ -189,5 +189,11 @@ function showChallenge(url, info, challengeId) {
     form.setAttribute('hx-swap', 'innerHTML');
     htmx.process(form);
 }
+
+{% if active %}
+document.addEventListener('DOMContentLoaded', function() {
+    showChallenge('{{ active.container_url }}', '{{ active.description|default("", true) }}', {{ active.id }});
+});
+{% endif %}
 </script>
 {% endblock %}

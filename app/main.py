@@ -74,9 +74,18 @@ async def index(request: Request):
             "SELECT * FROM challenges WHERE user_id = ? ORDER BY created_at DESC LIMIT 5",
             (user["id"],),
         ).fetchall()
+        # Find active (running) challenge
+        active = conn.execute(
+            "SELECT * FROM challenges WHERE user_id = ? AND status = 'running' ORDER BY created_at DESC LIMIT 1",
+            (user["id"],),
+        ).fetchone()
 
     return templates.TemplateResponse(
         request,
         "index.html",
-        {"user": user, "challenges": [dict(c) for c in challenges]},
+        {
+            "user": user,
+            "challenges": [dict(c) for c in challenges],
+            "active": dict(active) if active else None,
+        },
     )
