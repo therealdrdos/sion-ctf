@@ -259,7 +259,7 @@ async function submitJob(event) {
                 btn.disabled = false;
                 spinner.classList.add('hidden');
                 if (data.result && data.result.url) {
-                    resultEl.textContent = `CTF ready at ${data.result.url}`;
+                    resultEl.innerHTML = `CTF ready! <a href="${data.result.url}" target="_blank" class="ml-2 px-4 py-1 bg-blue-600 hover:bg-blue-700 rounded text-sm text-white inline-block">Open Challenge</a>`;
                     resultEl.classList.remove('hidden');
                 }
                 if (data.download_url) {
