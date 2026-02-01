@@ -16,9 +16,17 @@ from app.ctf.generator import (
     TEMPLATE_PROMPT,
 )
 from app.ctf.templates import get_template_for_vuln
-from app.ctf.router import deploy_challenge, serialize_spec
+from app.ctf.router import deploy_challenge, get_public_url, serialize_spec
 from app.ctf.validator import validate_with_spec
-from app.db import append_job_log, create_job, get_job, set_job_result, update_job_status
+from app.db import (
+    append_job_log,
+    create_job,
+    generate_public_path,
+    get_connection,
+    get_job,
+    set_job_result,
+    update_job_status,
+)
 from app.dashboard.router import get_user_api_key
 from app.ctf.aider_cli import run_aider_cli
 
@@ -211,6 +219,9 @@ def run_ctf_job(job_id: int, payload: Dict[str, Any]) -> None:
     last_requirements: str | None = None
     last_url: str | None = None
     last_challenge_name: str | None = None
+    challenge_id: int | None = None
+    public_path: str | None = None
+
     for attempt in range(max_attempts):
         update_job_status(job_id, "running", f"Generating app (attempt {attempt + 1})", 0.2 + attempt * 0.2)
         log(f"Generating app attempt {attempt + 1}")
@@ -220,8 +231,40 @@ def run_ctf_job(job_id: int, payload: Dict[str, Any]) -> None:
             validation_error = "Failed to generate app"
             continue
 
+        # Create or update challenge in database
+        if challenge_id is None:
+            public_path = generate_public_path()
+            with get_connection() as conn:
+                cursor = conn.execute(
+                    """INSERT INTO challenges
+                       (user_id, name, public_path, vuln_type, difficulty, description, app_code, 
+                        flag, status, exploit_spec)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        user_id,
+                        challenge.name,
+                        public_path,
+                        vuln_type,
+                        difficulty,
+                        challenge.vuln_description,
+                        challenge.app_code,
+                        flag,
+                        "generating",
+                        serialize_spec(spec),
+                    ),
+                )
+                challenge_id = cursor.lastrowid
+            log(f"Created challenge {challenge_id} with public_path {public_path}")
+        else:
+            # Update the app code
+            with get_connection() as conn:
+                conn.execute(
+                    "UPDATE challenges SET app_code = ? WHERE id = ?",
+                    (challenge.app_code, challenge_id),
+                )
+
         # Deploy
-        url, deploy_error = deploy_challenge(challenge, challenge_id=job_id, user_id=user_id)
+        url, deploy_error = deploy_challenge(challenge, challenge_id=challenge_id, user_id=user_id)
         if deploy_error:
             validation_error = f"Deploy failed: {deploy_error}"
             log(validation_error)
@@ -237,6 +280,16 @@ def run_ctf_job(job_id: int, payload: Dict[str, Any]) -> None:
         last_challenge_name = challenge.name
 
         if result.success:
+            # Update challenge status
+            with get_connection() as conn:
+                conn.execute(
+                    "UPDATE challenges SET status = ? WHERE id = ?",
+                    ("validated", challenge_id),
+                )
+
+            # Get the public URL for display
+            display_url = get_public_url(public_path, url) if public_path else url
+
             # Persist artifacts once on success
             job_dir, expires_at = _persist_artifacts(
                 job_id,
@@ -244,7 +297,7 @@ def run_ctf_job(job_id: int, payload: Dict[str, Any]) -> None:
                 requirements=challenge.requirements,
                 spec=spec,
                 flag=flag,
-                url=url,
+                url=display_url,
                 challenge_name=challenge.name,
             )
             log(f"Artifacts persisted. Expires at {expires_at}")
@@ -254,8 +307,9 @@ def run_ctf_job(job_id: int, payload: Dict[str, Any]) -> None:
                 "success",
                 "CTF ready",
                 {
+                    "challenge_id": challenge_id,
                     "challenge_name": challenge.name,
-                    "url": url,
+                    "url": display_url,
                     "flag": flag,
                     "exploit_spec": serialize_spec(spec),
                     "download_path": str(job_dir),
@@ -271,10 +325,24 @@ def run_ctf_job(job_id: int, payload: Dict[str, Any]) -> None:
 
     # All attempts failed
     log(f"Failed to generate working CTF after {max_attempts} attempts. Last error: {validation_error}")
+
+    # Update challenge status to failed
+    if challenge_id:
+        with get_connection() as conn:
+            conn.execute(
+                "UPDATE challenges SET status = ? WHERE id = ?",
+                ("failed", challenge_id),
+            )
+
+    # Get display URL for failure result
+    display_url = get_public_url(public_path, last_url) if public_path and last_url else last_url
+
     failure_result = {
         "error": validation_error or "Validation failed",
         "attempts": max_attempts,
     }
+    if challenge_id:
+        failure_result["challenge_id"] = challenge_id
     if last_app_code and last_requirements:
         job_dir, expires_at = _persist_artifacts(
             job_id,
@@ -282,14 +350,14 @@ def run_ctf_job(job_id: int, payload: Dict[str, Any]) -> None:
             requirements=last_requirements,
             spec=spec,
             flag=flag,
-            url=last_url,
+            url=display_url,
             challenge_name=last_challenge_name,
         )
         log(f"Artifacts persisted (failure). Expires at {expires_at}")
         failure_result["download_path"] = str(job_dir)
         failure_result["expires_at"] = expires_at
-        if last_url:
-            failure_result["url"] = last_url
+        if display_url:
+            failure_result["url"] = display_url
         if last_challenge_name:
             failure_result["challenge_name"] = last_challenge_name
     set_job_result(job_id, "failed", validation_error or "Failed to generate working CTF", failure_result)
