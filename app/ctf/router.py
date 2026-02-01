@@ -97,13 +97,12 @@ def deploy_challenge(
             api_key = get_user_api_key(user_id)
             if api_key:
                 instruction = (
-                    "Fix this Flask app so it starts without crashing.\n\n"
-                    f"Crash logs (trimmed):\n{result.logs[:2000]}\n\n"
-                    "Rules:\n"
-                    "- Keep the FLAG variable intact\n"
-                    "- Ensure /health returns OK\n"
-                    f"- Vulnerability type: {spec.vuln_type}\n"
-                    "- Use Flask 3.x patterns (no before_first_request)\n"
+                    "Goal: fix app.py so it boots cleanly.\n"
+                    "You must NOT change the FLAG value.\n"
+                    "Requirements: /health returns OK; use modern Flask (no before_first_request).\n"
+                    f"Vuln type: {spec.vuln_type}\n"
+                    "Crash logs (trimmed):\n"
+                    f"{result.logs[:2000]}\n"
                 )
 
                 extra_files = {
@@ -238,14 +237,14 @@ async def generate_ctf(
                 verify_content = VERIFY_SCRIPT.read_text()
 
                 instruction = (
-                    "Fix the Flask app to satisfy the exploit specification tests.\n\n"
-                    f"Validation error:\n{validation_error}\n\n"
-                    "Tests must pass:\n"
-                    f"- Exploit {spec.exploit_method} {spec.exploit_path} with {spec.exploit_params} "
-                    f"must return the flag {flag}\n"
-                    f"- Safe {spec.safe_method} {spec.safe_path} with {spec.safe_params} must NOT return the flag\n"
-                    "- /health must return OK\n"
-                    "- Keep the FLAG variable intact\n"
+                    "Goal: make exploit pass and safe request fail.\n"
+                    "Do NOT change the FLAG value. Keep /health returning OK. Use modern Flask.\n"
+                    f"Flag: {flag}\n"
+                    "Exploit request must return the flag:\n"
+                    f"- {spec.exploit_method} {spec.exploit_path} with {spec.exploit_params}\n"
+                    "Safe request must NOT return the flag:\n"
+                    f"- {spec.safe_method} {spec.safe_path} with {spec.safe_params}\n"
+                    f"Validation error: {validation_error}\n"
                 )
 
                 aider_result = run_aider_cli(

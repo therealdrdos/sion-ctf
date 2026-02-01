@@ -54,6 +54,7 @@
             </div>
             <div class="h-48 overflow-y-auto text-xs bg-gray-800 border border-gray-700 rounded p-2 font-mono text-green-300 whitespace-pre-wrap" id="job-logs"></div>
             <div class="mt-2 text-sm text-green-400 hidden" id="job-result"></div>
+            <div class="mt-2 text-sm text-blue-400 hidden" id="job-download"></div>
         </div>
     </div>
 
@@ -210,6 +211,7 @@ async function submitJob(event) {
     const logsEl = document.getElementById('job-logs');
     const jobIdLabel = document.getElementById('job-id-label');
     const resultEl = document.getElementById('job-result');
+    const downloadEl = document.getElementById('job-download');
 
     consoleBox.classList.remove('hidden');
     statusEl.textContent = 'queued';
@@ -217,6 +219,8 @@ async function submitJob(event) {
     logsEl.textContent = '';
     resultEl.classList.add('hidden');
     resultEl.textContent = '';
+    downloadEl.classList.add('hidden');
+    downloadEl.textContent = '';
 
     let jobId = null;
     try {
@@ -257,6 +261,10 @@ async function submitJob(event) {
                 if (data.result && data.result.url) {
                     resultEl.textContent = `CTF ready at ${data.result.url}`;
                     resultEl.classList.remove('hidden');
+                }
+                if (data.download_url) {
+                    downloadEl.innerHTML = `<a class="underline" href="${data.download_url}">Download source (expires soon)</a>`;
+                    downloadEl.classList.remove('hidden');
                 }
                 return;
             }

@@ -178,7 +178,7 @@ Create a specific, testable exploit that can be validated with simple HTTP reque
             ],
             response_format={"type": "json_object"},
             temperature=0.7,
-            max_tokens=1000,
+            max_tokens=4000,
         )
 
         if response.usage:
