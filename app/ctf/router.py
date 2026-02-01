@@ -208,7 +208,7 @@ async def generate_ctf(
     flag = generate_flag()
 
     # Step 3: Generate app that matches the spec, with retry loop
-    max_attempts = 3
+    max_attempts = 5
     challenge = None
     url = None
     validation_error = None
