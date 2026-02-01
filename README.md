@@ -48,6 +48,17 @@ uv run uvicorn app.main:app --reload
 
 Open http://localhost:8000
 
+### Background jobs (Celery)
+
+- Requires Redis (`REDIS_URL`, default `redis://localhost:6379/0`)
+- Start worker:
+  ```bash
+  celery -A app.celery_app.celery_app worker --loglevel=info
+  ```
+- API endpoints:
+  - `POST /api/jobs` with JSON `{ "prompt": "...", "difficulty": "easy|medium|hard", "vuln_type": "sqli|cmdi|path|auth|idor|xss" }` → returns `job_id`
+  - `GET /api/jobs/{job_id}/status` → `{status, progress, message, logs, result}`
+
 ### Docker Deployment
 
 ```bash

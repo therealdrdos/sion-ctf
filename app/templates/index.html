@@ -25,23 +25,36 @@
         </div>
 
         <!-- Input Form -->
-        <form id="ctf-form" hx-post="/ctf/generate" hx-target="#messages" hx-swap="beforeend" hx-indicator="#spinner">
+        <form id="ctf-form">
             <input type="hidden" name="difficulty" id="difficulty-input" value="easy">
             <input type="hidden" name="vuln_types" id="vuln-types-input" value="sqli">
 
             <div class="flex gap-2">
-                <input type="text" name="prompt" placeholder="Describe the vulnerable app you want..."
+                <input type="text" name="prompt" id="prompt-input" placeholder="Describe the vulnerable app you want..."
                        class="flex-1 px-4 py-2 bg-gray-700 border border-gray-600 rounded focus:border-green-500 focus:outline-none"
                        required>
-                <button type="submit" class="px-6 py-2 bg-green-600 hover:bg-green-700 rounded font-medium flex items-center gap-2">
+                <button type="submit" id="generate-btn" class="px-6 py-2 bg-green-600 hover:bg-green-700 rounded font-medium flex items-center gap-2">
                     <span>Generate</span>
-                    <svg id="spinner" class="htmx-indicator w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                    <svg id="spinner" class="hidden w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
                         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                         <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
                     </svg>
                 </button>
             </div>
         </form>
+
+        <!-- Job Console -->
+        <div id="job-console" class="mt-4 p-3 bg-gray-900 rounded border border-gray-700 hidden">
+            <div class="flex items-center justify-between mb-2">
+                <div>
+                    <p class="text-sm text-gray-200 font-semibold">Job Status: <span id="job-status">queued</span></p>
+                    <p class="text-xs text-gray-400" id="job-message"></p>
+                </div>
+                <span class="text-xs text-gray-500" id="job-id-label"></span>
+            </div>
+            <div class="h-48 overflow-y-auto text-xs bg-gray-800 border border-gray-700 rounded p-2 font-mono text-green-300 whitespace-pre-wrap" id="job-logs"></div>
+            <div class="mt-2 text-sm text-green-400 hidden" id="job-result"></div>
+        </div>
     </div>
 
     <!-- Configuration Panel -->
@@ -178,6 +191,92 @@ function updateVulnTypes() {
         .map(cb => cb.value);
     document.getElementById('vuln-types-input').value = checked.join(',');
 }
+
+async function submitJob(event) {
+    event.preventDefault();
+    const prompt = document.getElementById('prompt-input').value.trim();
+    if (!prompt) return;
+    const difficulty = document.getElementById('difficulty-input').value;
+    const vuln_types = document.getElementById('vuln-types-input').value || 'sqli';
+
+    const btn = document.getElementById('generate-btn');
+    const spinner = document.getElementById('spinner');
+    btn.disabled = true;
+    spinner.classList.remove('hidden');
+
+    const consoleBox = document.getElementById('job-console');
+    const statusEl = document.getElementById('job-status');
+    const msgEl = document.getElementById('job-message');
+    const logsEl = document.getElementById('job-logs');
+    const jobIdLabel = document.getElementById('job-id-label');
+    const resultEl = document.getElementById('job-result');
+
+    consoleBox.classList.remove('hidden');
+    statusEl.textContent = 'queued';
+    msgEl.textContent = 'Submitting job...';
+    logsEl.textContent = '';
+    resultEl.classList.add('hidden');
+    resultEl.textContent = '';
+
+    let jobId = null;
+    try {
+        const res = await fetch('/api/jobs', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ prompt, difficulty, vuln_type: vuln_types.split(',')[0] || 'sqli' })
+        });
+        if (!res.ok) throw new Error(`Submit failed: ${res.status}`);
+        const data = await res.json();
+        jobId = data.job_id;
+        jobIdLabel.textContent = `Job ID: ${jobId}`;
+        msgEl.textContent = 'Queued';
+        statusEl.textContent = 'queued';
+    } catch (e) {
+        msgEl.textContent = e.message;
+        statusEl.textContent = 'error';
+        btn.disabled = false;
+        spinner.classList.add('hidden');
+        return;
+    }
+
+    // Poll status
+    async function poll() {
+        if (!jobId) return;
+        try {
+            const res = await fetch(`/api/jobs/${jobId}/status`);
+            if (!res.ok) throw new Error(`Status failed: ${res.status}`);
+            const data = await res.json();
+            statusEl.textContent = data.status;
+            msgEl.textContent = data.message || '';
+            const lines = (data.logs || []).map((l, i) => `[${String(i).padStart(3, '0')}] ▸ ${l}`);
+            logsEl.innerHTML = lines.map(line => line.replace(/\\n/g, '<br>')).join('<br>');
+            logsEl.scrollTop = logsEl.scrollHeight;
+            if (data.status === 'success') {
+                btn.disabled = false;
+                spinner.classList.add('hidden');
+                if (data.result && data.result.url) {
+                    resultEl.textContent = `CTF ready at ${data.result.url}`;
+                    resultEl.classList.remove('hidden');
+                }
+                return;
+            }
+            if (data.status === 'failed') {
+                btn.disabled = false;
+                spinner.classList.add('hidden');
+                return;
+            }
+            setTimeout(poll, 2000);
+        } catch (e) {
+            msgEl.textContent = e.message;
+            statusEl.textContent = 'error';
+            btn.disabled = false;
+            spinner.classList.add('hidden');
+        }
+    }
+    poll();
+}
+
+document.getElementById('ctf-form').addEventListener('submit', submitJob);
 
 function showChallenge(url, info, challengeId) {
     document.getElementById('active-challenge').classList.remove('hidden');

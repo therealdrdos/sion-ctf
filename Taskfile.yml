@@ -17,6 +17,11 @@ tasks:
     desc: Run tests
     cmds:
       - uv run pytest tests/ -v
+    
+  celery:
+    desc: Run celery worker
+    cmds:
+      - uv run celery -A app.celery_app.celery_app worker --loglevel=info
 
   lint:
     desc: Lint and format
