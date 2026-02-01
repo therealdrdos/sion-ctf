@@ -29,7 +29,9 @@ def _run_migrations(conn):
     if "exploit_spec" not in cols:
         conn.execute("ALTER TABLE challenges ADD COLUMN exploit_spec TEXT")
     if "public_path" not in cols:
-        conn.execute("ALTER TABLE challenges ADD COLUMN public_path TEXT UNIQUE")
+        # SQLite doesn't support ADD COLUMN with UNIQUE, so add column first then create index
+        conn.execute("ALTER TABLE challenges ADD COLUMN public_path TEXT")
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_challenges_public_path ON challenges(public_path)")
 
 
 def init_db():
