@@ -6,12 +6,12 @@ tasks:
   dev:
     desc: Run main app (port 8000)
     cmds:
-      - uv run uvicorn app.main:app --reload --port 8000
+      - uv run uvicorn app.main:app --port 8000
 
   proxy:
     desc: Run challenge proxy (port 5000)
     cmds:
-      - uv run uvicorn app.challenge_proxy:app --reload --port 5000
+      - uv run uvicorn app.challenge_proxy:app --port 5000
 
   test:
     desc: Run tests

@@ -2,6 +2,7 @@ import html
 import logging
 import time
 from collections import defaultdict
+from pathlib import Path
 
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse
@@ -10,7 +11,7 @@ import json
 
 from app.auth.router import get_current_user
 from app.config import settings
-from app.ctf.aider_fixer import fix_crash_with_aider, fix_validation_with_aider
+from app.ctf.aider_cli import run_aider_cli
 from app.ctf.docker_mgr import DockerManager
 from app.ctf.generator import (
     CTFChallenge,
@@ -32,6 +33,11 @@ RATE_LIMIT_SECONDS = 30
 
 # Global docker manager instance
 _docker_mgr: DockerManager | None = None
+
+# Paths for Aider CLI context and testing
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DOCS_PATH = PROJECT_ROOT / "ctf_framework_docs.md"
+VERIFY_SCRIPT = PROJECT_ROOT / "verify_challenge.py"
 
 
 def get_docker_manager() -> DockerManager | None:
@@ -85,25 +91,57 @@ def deploy_challenge(
                 )
             return result.info.url, ""
 
-        # Container failed - try to fix the code using Aider
+        # Container failed - try to fix the code using Aider CLI (no tests yet since container isn't running)
         if result.logs and attempt < max_fix_attempts and spec:
-            logger.info(f"Container crashed, using Aider to fix (attempt {attempt + 1})")
+            logger.info(f"Container crashed, using Aider CLI to fix (attempt {attempt + 1})")
             api_key = get_user_api_key(user_id)
             if api_key:
-                aider_result = fix_crash_with_aider(
-                    app_code=app_code,
-                    crash_logs=result.logs,
-                    spec=spec,
-                    flag=challenge.flag,
-                    api_key=api_key,
+                instruction = (
+                    "Fix this Flask app so it starts without crashing.\n\n"
+                    f"Crash logs (trimmed):\n{result.logs[:2000]}\n\n"
+                    "Rules:\n"
+                    "- Keep the FLAG variable intact\n"
+                    "- Ensure /health returns OK\n"
+                    f"- Vulnerability type: {spec.vuln_type}\n"
+                    "- Use Flask 3.x patterns (no before_first_request)\n"
                 )
-                if aider_result.success and aider_result.code:
-                    logger.info(f"Aider fix succeeded: {aider_result.message}")
-                    app_code = aider_result.code
+
+                extra_files = {
+                    "spec.json": json.dumps(
+                        {
+                            "flag": challenge.flag,
+                            "exploit_method": spec.exploit_method,
+                            "exploit_path": spec.exploit_path,
+                            "exploit_params": spec.exploit_params,
+                            "safe_method": spec.safe_method,
+                            "safe_path": spec.safe_path,
+                            "safe_params": spec.safe_params,
+                        }
+                    )
+                }
+
+                aider_result = run_aider_cli(
+                    app_code=app_code,
+                    requirements=requirements,
+                    instruction=instruction,
+                    api_key=api_key,
+                    docs_path=str(DOCS_PATH),
+                    extra_files=extra_files,
+                )
+                if aider_result.success and aider_result.app_code:
+                    logger.info("Aider CLI fix succeeded")
+                    app_code = aider_result.app_code
+                    if aider_result.requirements:
+                        requirements = aider_result.requirements
+                        logger.info("Aider CLI updated requirements")
                     mgr.cleanup_image(image_id)
                     continue
                 else:
-                    logger.warning(f"Aider fix failed: {aider_result.message}")
+                    logger.warning(
+                        "Aider CLI fix failed: returncode=%s, stderr=%s",
+                        aider_result.returncode,
+                        (aider_result.stderr or "")[:200],
+                    )
             else:
                 logger.warning("No API key available for Aider fix")
 
@@ -182,23 +220,57 @@ async def generate_ctf(
         if attempt == 0:
             challenge = generate_ctf_from_spec(spec, flag, user_id, prompt)
         elif challenge and validation_error:
-            # Fix the app using Aider
+            # Fix the app using Aider CLI with auto-test against the running container
             logger.info(f"Using Aider to fix validation error: {validation_error}")
             api_key = get_user_api_key(user_id)
             if api_key:
-                aider_result = fix_validation_with_aider(
-                    app_code=challenge.app_code,
-                    validation_error=validation_error,
-                    spec=spec,
-                    flag=flag,
-                    api_key=api_key,
+                spec_json = json.dumps(
+                    {
+                        "flag": flag,
+                        "exploit_method": spec.exploit_method,
+                        "exploit_path": spec.exploit_path,
+                        "exploit_params": spec.exploit_params,
+                        "safe_method": spec.safe_method,
+                        "safe_path": spec.safe_path,
+                        "safe_params": spec.safe_params,
+                    }
                 )
-                if aider_result.success and aider_result.code:
-                    logger.info(f"Aider fix succeeded: {aider_result.message}")
+                verify_content = VERIFY_SCRIPT.read_text()
+
+                instruction = (
+                    "Fix the Flask app to satisfy the exploit specification tests.\n\n"
+                    f"Validation error:\n{validation_error}\n\n"
+                    "Tests must pass:\n"
+                    f"- Exploit {spec.exploit_method} {spec.exploit_path} with {spec.exploit_params} "
+                    f"must return the flag {flag}\n"
+                    f"- Safe {spec.safe_method} {spec.safe_path} with {spec.safe_params} must NOT return the flag\n"
+                    "- /health must return OK\n"
+                    "- Keep the FLAG variable intact\n"
+                )
+
+                aider_result = run_aider_cli(
+                    app_code=challenge.app_code,
+                    requirements=challenge.requirements,
+                    instruction=instruction,
+                    api_key=api_key,
+                    docs_path=str(DOCS_PATH),
+                    test_cmd="python verify_challenge.py spec.json",
+                    extra_files={
+                        "spec.json": spec_json,
+                        "verify_challenge.py": verify_content,
+                    },
+                    env_vars={
+                        "TARGET_URL": url or "",
+                        "FLAG": flag,
+                    },
+                )
+                if aider_result.success and aider_result.app_code:
+                    logger.info("Aider CLI fix succeeded")
+                    new_requirements = aider_result.requirements or challenge.requirements
                     challenge = CTFChallenge(
                         name=challenge.name,
-                        app_code=aider_result.code,
-                        requirements=challenge.requirements,
+                        app_code=aider_result.app_code,
+                        requirements=new_requirements,
                         flag=flag,
                         vuln_description=spec.exploit_description,
                         exploit_hint=f"{spec.exploit_method} {spec.exploit_path}",
@@ -208,7 +280,11 @@ async def generate_ctf(
                     )
                 else:
                     # Aider fix failed, try generating fresh
-                    logger.warning(f"Aider fix failed: {aider_result.message}, regenerating")
+                    logger.warning(
+                        "Aider CLI fix failed: returncode=%s, stderr=%s",
+                        getattr(aider_result, "returncode", "n/a"),
+                        (getattr(aider_result, "stderr", "") or "")[:200],
+                    )
                     challenge = generate_ctf_from_spec(spec, flag, user_id, prompt)
             else:
                 # No API key, regenerate from scratch
