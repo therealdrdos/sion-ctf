@@ -261,6 +261,10 @@ async function submitJob(event) {
                 if (data.result && data.result.url) {
                     resultEl.innerHTML = `CTF ready! <a href="${data.result.url}" target="_blank" class="ml-2 px-4 py-1 bg-blue-600 hover:bg-blue-700 rounded text-sm text-white inline-block">Open Challenge</a>`;
                     resultEl.classList.remove('hidden');
+                    // Show the active challenge panel with Tutorial link
+                    if (data.result.challenge_id) {
+                        showChallenge(data.result.url, data.result.challenge_name || '', data.result.challenge_id);
+                    }
                 }
                 if (data.download_url) {
                     downloadEl.innerHTML = `<a class="underline" href="${data.download_url}">Download source (expires soon)</a>`;
