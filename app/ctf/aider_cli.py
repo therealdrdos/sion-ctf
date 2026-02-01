@@ -144,7 +144,7 @@ def run_aider_cli(
         cmd.extend(edit_files)
 
         # Instrumentation: log environment and command (Hypothesis A: audioop missing due to Python 3.13 env)
-        _debug_log(
+        '''_debug_log(
             hypothesis_id="A",
             location="aider_cli.py:cmd",
             message="About to run aider CLI",
@@ -157,7 +157,7 @@ def run_aider_cli(
                 "extra_files": list(extra_files.keys()) if extra_files else [],
                 "test_cmd": test_cmd,
             },
-        )
+        )'''
 
         env = os.environ.copy()
         if env_vars:
@@ -188,7 +188,7 @@ def run_aider_cli(
         )
 
         # Instrumentation: log outcome (Hypothesis B: stderr contains audioop)
-        _debug_log(
+        '''_debug_log(
             hypothesis_id="B",
             location="aider_cli.py:result",
             message="Aider CLI completed",
@@ -199,7 +199,7 @@ def run_aider_cli(
                 "has_app": new_app is not None,
                 "has_req": new_req is not None,
             },
-        )
+        )'''
 
         if not result.success:
             logger.warning("[AIDER CLI] failed with code %s", proc.returncode)

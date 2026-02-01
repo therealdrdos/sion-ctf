@@ -10,14 +10,17 @@ from typing import Any, Dict
 from app.celery_app import celery_app
 from app.ctf.generator import (
     CTFChallenge,
-    generate_ctf_from_spec,
     generate_exploit_spec,
     generate_flag,
+    validate_code,
+    TEMPLATE_PROMPT,
 )
+from app.ctf.templates import get_template_for_vuln
 from app.ctf.router import deploy_challenge, serialize_spec
 from app.ctf.validator import validate_with_spec
 from app.db import append_job_log, create_job, get_job, set_job_result, update_job_status
 from app.dashboard.router import get_user_api_key
+from app.ctf.aider_cli import run_aider_cli
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +92,79 @@ def _persist_artifacts(
     return job_dir, expires_at
 
 
+def _build_with_aider(spec, flag: str, user_id: int, prompt: str) -> CTFChallenge | None:
+    """Use Aider CLI to add vulnerable code to a template based on spec."""
+    api_key = get_user_api_key(user_id)
+    if not api_key:
+        return None
+
+    template_name, template_code = get_template_for_vuln(spec.vuln_type)
+    template_code = template_code.replace('FLAG = "FLAG{placeholder}"', f'FLAG = "{flag}"')
+
+    # Instruction derived from TEMPLATE_PROMPT + spec
+    instruction = (
+        "You will edit app.py (a Flask template) to add the vulnerable endpoint(s) that satisfy this exploit spec.\n"
+        f"Template type: {template_name}\n\n"
+        f"{TEMPLATE_PROMPT}\n\n"
+        "Exploit that MUST return the flag:\n"
+        f"- Method: {spec.exploit_method}\n"
+        f"- Path: {spec.exploit_path}\n"
+        f"- Params: {json.dumps(spec.exploit_params)}\n"
+        f"- Description: {spec.exploit_description}\n\n"
+        "Safe request that must NOT return the flag:\n"
+        f"- Method: {spec.safe_method}\n"
+        f"- Path: {spec.safe_path}\n"
+        f"- Params: {json.dumps(spec.safe_params)}\n\n"
+        f"User request/theme: {prompt}\n"
+        "Do NOT remove the FLAG. Keep /health working. Use modern Flask.\n"
+        "Edit app.py directly; do not rename files. Keep code minimal.\n"
+    )
+
+    spec_json = json.dumps(
+        {
+            "flag": flag,
+            "exploit_method": spec.exploit_method,
+            "exploit_path": spec.exploit_path,
+            "exploit_params": spec.exploit_params,
+            "safe_method": spec.safe_method,
+            "safe_path": spec.safe_path,
+            "safe_params": spec.safe_params,
+        }
+    )
+
+    docs_path = Path("ctf_framework_docs.md")
+    docs_arg = str(docs_path) if docs_path.exists() else None
+
+    result = run_aider_cli(
+        app_code=template_code,
+        requirements="flask",
+        instruction=instruction,
+        api_key=api_key,
+        docs_path=docs_arg,
+        extra_files={"spec.json": spec_json},
+    )
+    if not result.success or not result.app_code:
+        return None
+
+    app_code = result.app_code
+    if flag not in app_code:
+        return None
+    if not validate_code(app_code):
+        return None
+
+    return CTFChallenge(
+        name=f"{spec.vuln_type} challenge",
+        app_code=app_code,
+        requirements=result.requirements or "flask",
+        flag=flag,
+        vuln_description=spec.exploit_description,
+        exploit_hint=f"{spec.exploit_method} {spec.exploit_path}",
+        difficulty=spec.difficulty,
+        vuln_types=[spec.vuln_type],
+        exploit_spec=spec,
+    )
+
+
 @celery_app.task(name="app.tasks.ctf_tasks.run_ctf_job")
 def run_ctf_job(job_id: int, payload: Dict[str, Any]) -> None:
     """
@@ -138,10 +214,7 @@ def run_ctf_job(job_id: int, payload: Dict[str, Any]) -> None:
     for attempt in range(max_attempts):
         update_job_status(job_id, "running", f"Generating app (attempt {attempt + 1})", 0.2 + attempt * 0.2)
         log(f"Generating app attempt {attempt + 1}")
-        if attempt == 0:
-            challenge = generate_ctf_from_spec(spec, flag, user_id, prompt)
-        else:
-            challenge = generate_ctf_from_spec(spec, flag, user_id, prompt)
+        challenge = _build_with_aider(spec, flag, user_id, prompt)
 
         if not challenge:
             validation_error = "Failed to generate app"

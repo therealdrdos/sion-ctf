@@ -435,7 +435,7 @@ from app.ctf.templates import get_template_for_vuln
 
 TEMPLATE_PROMPT = """You are a CTF challenge generator. You will ADD vulnerable code to an existing Flask app template.
 
-IMPORTANT: You are NOT writing a complete app. The template already has:
+The template already has the following:
 - Flask app setup
 - Database/file/auth setup (depending on template)
 - /health endpoint
@@ -444,34 +444,10 @@ IMPORTANT: You are NOT writing a complete app. The template already has:
 Your job is to ADD the vulnerable endpoint(s) that match the exploit specification.
 
 RULES:
-1. Return ONLY the new code to INSERT (routes, functions, etc.)
+1. You are supposed to leave vulnerable code on purpose, for example unsafe sql queries.
 2. The exploit request MUST return the flag when exploited
 3. The safe request must work but NOT return the flag
-4. Do NOT include imports, app setup, or if __name__ - those exist in template
-5. Use the template's existing functions (get_db, setup_files, etc.)
-
-OUTPUT FORMAT - Return valid JSON:
-{
-    "name": "Short creative challenge name (2-4 words)",
-    "vulnerable_code": "# ONLY the new routes/functions to add",
-    "init_code": "# Optional: code to add to init_db() or setup(), or empty string"
-}
-
-EXAMPLES:
-
-For SQL injection template, you might return:
-{
-    "name": "Query Leaker",
-    "vulnerable_code": "@app.route('/search')\\ndef search():\\n    term = request.args.get('q', '')\\n    db = get_db()\\n    # VULNERABLE: direct string concatenation\\n    results = db.execute(f\\\"SELECT * FROM users WHERE username LIKE '%{term}%'\\\").fetchall()\\n    return str([dict(r) for r in results])",
-    "init_code": ""
-}
-
-For command injection template:
-{
-    "name": "Ping Pong",
-    "vulnerable_code": "@app.route('/ping', methods=['POST'])\\ndef ping():\\n    host = request.form.get('host', '')\\n    # VULNERABLE: command injection\\n    output = subprocess.check_output(f'ping -c 1 {host}', shell=True)\\n    return output",
-    "init_code": ""
-}"""
+"""
 
 
 def generate_ctf_from_spec(
